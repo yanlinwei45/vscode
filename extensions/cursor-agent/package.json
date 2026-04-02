@@ -1,0 +1,218 @@
+{
+  "name": "cursor-agent",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.0.1",
+  "publisher": "vscode",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "icon": "media/activitybar.svg",
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onView:cursorAgent.sidebar",
+    "onCommand:cursorAgent.open",
+    "onCommand:cursorAgent.sendSelection",
+    "onCommand:cursorAgent.sendCurrentFile",
+    "onCommand:cursorAgent.sendProblems",
+    "onCommand:cursorAgent.showLogs",
+    "onCommand:cursorAgent.insertCodeBlock",
+    "onCommand:cursorAgent.replaceSelectionWithCodeBlock",
+    "onCommand:cursorAgent.previewInsertCodeBlock",
+    "onCommand:cursorAgent.previewReplaceSelectionWithCodeBlock",
+    "onCommand:cursorAgent.acceptProposal",
+    "onCommand:cursorAgent.rejectProposal"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cursor-agent",
+          "title": "%container.title%",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "cursor-agent": [
+        {
+          "id": "cursorAgent.sidebar",
+          "type": "webview",
+          "name": "%view.name%",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cursorAgent.open",
+        "title": "%command.open%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "cursorAgent.sendSelection",
+        "title": "%command.sendSelection%",
+        "category": "%command.category%",
+        "icon": "$(send)"
+      },
+      {
+        "command": "cursorAgent.newChat",
+        "title": "%command.newChat%",
+        "category": "%command.category%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cursorAgent.sendCurrentFile",
+        "title": "%command.sendCurrentFile%",
+        "category": "%command.category%",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "cursorAgent.sendProblems",
+        "title": "%command.sendProblems%",
+        "category": "%command.category%",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "cursorAgent.showLogs",
+        "title": "%command.showLogs%",
+        "category": "%command.category%",
+        "icon": "$(output)"
+      },
+      {
+        "command": "cursorAgent.insertCodeBlock",
+        "title": "%command.insertCodeBlock%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "cursorAgent.replaceSelectionWithCodeBlock",
+        "title": "%command.replaceSelectionWithCodeBlock%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "cursorAgent.previewInsertCodeBlock",
+        "title": "%command.previewInsertCodeBlock%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "cursorAgent.previewReplaceSelectionWithCodeBlock",
+        "title": "%command.previewReplaceSelectionWithCodeBlock%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "cursorAgent.acceptProposal",
+        "title": "%command.acceptProposal%",
+        "category": "%command.category%",
+        "icon": "$(check)"
+      },
+      {
+        "command": "cursorAgent.rejectProposal",
+        "title": "%command.rejectProposal%",
+        "category": "%command.category%",
+        "icon": "$(close)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "cursorAgent.sendSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cursorAgent.sendCurrentFile"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cursorAgent.open"
+        },
+        {
+          "command": "cursorAgent.sendSelection"
+        },
+        {
+          "command": "cursorAgent.newChat"
+        },
+        {
+          "command": "cursorAgent.sendCurrentFile"
+        },
+        {
+          "command": "cursorAgent.sendProblems"
+        },
+        {
+          "command": "cursorAgent.showLogs"
+        },
+        {
+          "command": "cursorAgent.acceptProposal"
+        },
+        {
+          "command": "cursorAgent.rejectProposal"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "cursorAgent.newChat",
+          "when": "view == cursorAgent.sidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "cursorAgent.sendCurrentFile",
+          "when": "view == cursorAgent.sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cursorAgent.sendProblems",
+          "when": "view == cursorAgent.sidebar",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cursorAgent.showLogs",
+          "when": "view == cursorAgent.sidebar",
+          "group": "navigation@3"
+        },
+        {
+          "command": "cursorAgent.acceptProposal",
+          "when": "view == cursorAgent.sidebar",
+          "group": "navigation@4"
+        },
+        {
+          "command": "cursorAgent.rejectProposal",
+          "when": "view == cursorAgent.sidebar",
+          "group": "navigation@5"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Cursor Agent",
+      "properties": {
+        "cursorAgent.systemPrompt": {
+          "type": "string",
+          "default": "You are Cursor, an expert coding assistant inside VS Code. Be concise, practical, and code-focused.",
+          "description": "%config.systemPrompt.description%",
+          "scope": "application"
+        },
+        "cursorAgent.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "%config.model.description%",
+          "scope": "application"
+        },
+        "cursorAgent.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "%config.baseUrl.description%",
+          "scope": "application"
+        }
+      }
+    }
+  }
+}
