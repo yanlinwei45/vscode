@@ -3,17 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as https from 'https';
 import * as http from 'http';
+import * as https from 'https';
 import * as vscode from 'vscode';
+import { CursorToolService, type ICursorToolDefinition } from './cursorToolService';
 
 const STORAGE_KEY = 'cursorAgent.chatState.v1';
 const REQUEST_HISTORY_LIMIT = 30;
 const REQUEST_TIMEOUT_MS = 120000;
+const MAX_TOOL_ROUNDS = 8;
 
 export interface ICursorChatMessage {
-	readonly role: 'user' | 'assistant' | 'system';
+	readonly role: 'user' | 'assistant' | 'system' | 'tool';
 	readonly content: string;
+	readonly metadata?: {
+		readonly toolName?: string;
+	};
 }
 
 export interface ICursorChatState {
@@ -22,12 +27,29 @@ export interface ICursorChatState {
 	readonly lastRequestContext?: string;
 }
 
+interface IAnthropicTextBlock {
+	readonly type: 'text';
+	readonly text: string;
+}
+
+interface IAnthropicToolUseBlock {
+	readonly type: 'tool_use';
+	readonly id: string;
+	readonly name: string;
+	readonly input?: unknown;
+}
+
+interface IAnthropicToolResultBlock {
+	readonly type: 'tool_result';
+	readonly tool_use_id: string;
+	readonly content: string;
+}
+
+type IAnthropicContentBlock = IAnthropicTextBlock | IAnthropicToolUseBlock | IAnthropicToolResultBlock;
+
 interface IAnthropicMessage {
 	readonly role: 'user' | 'assistant';
-	readonly content: readonly {
-		readonly type: 'text';
-		readonly text: string;
-	}[];
+	readonly content: readonly IAnthropicContentBlock[];
 }
 
 interface IAnthropicRequest {
@@ -35,26 +57,46 @@ interface IAnthropicRequest {
 	readonly system?: string;
 	readonly max_tokens: number;
 	readonly messages: readonly IAnthropicMessage[];
+	readonly tools?: readonly ICursorToolDefinition[];
+	readonly tool_choice?: {
+		readonly type: 'auto';
+	};
 }
 
 interface IAnthropicResponse {
-	readonly content?: readonly {
-		readonly type?: string;
-		readonly text?: string;
-	}[];
-	readonly choices?: readonly {
-		readonly message?: {
-			readonly content?: string | readonly { readonly text?: string; readonly type?: string }[];
-		};
-	}[];
+	readonly content?: readonly IAnthropicResponseBlock[];
 	error?: {
 		readonly message?: string;
 	};
 }
 
+interface IAnthropicResponseTextBlock {
+	readonly type: 'text';
+	readonly text: string;
+}
+
+interface IAnthropicResponseToolUseBlock {
+	readonly type: 'tool_use';
+	readonly id: string;
+	readonly name: string;
+	readonly input?: unknown;
+}
+
+interface IAnthropicResponseOtherBlock {
+	readonly type?: string;
+	readonly text?: string;
+}
+
+type IAnthropicResponseBlock = IAnthropicResponseTextBlock | IAnthropicResponseToolUseBlock | IAnthropicResponseOtherBlock;
+
 interface IJsonResponse<T> {
 	readonly statusCode: number;
 	readonly body: T;
+}
+
+interface IRequestTurn {
+	readonly role: 'user' | 'assistant';
+	readonly content: readonly IAnthropicContentBlock[];
 }
 
 export class CursorAgentService extends vscode.Disposable {
@@ -68,7 +110,8 @@ export class CursorAgentService extends vscode.Disposable {
 
 	constructor(
 		private readonly storage: vscode.Memento,
-		private readonly outputChannel: vscode.OutputChannel
+		private readonly outputChannel: vscode.OutputChannel,
+		private readonly toolService: CursorToolService
 	) {
 		super(() => {
 			this._onDidChangeState.dispose();
@@ -97,12 +140,12 @@ export class CursorAgentService extends vscode.Disposable {
 
 	async sendUserMessage(prompt: string, requestContext?: string): Promise<void> {
 		const trimmed = prompt.trim();
-		if (!trimmed || this.busy) {
+		if (this.busy || (!trimmed && !requestContext?.trim())) {
 			return;
 		}
 
 		this.lastRequestContext = requestContext?.trim() || undefined;
-		this.messages = [...this.messages, { role: 'user', content: trimmed }];
+		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('Use the attached context and continue.') }];
 		this.busy = true;
 		this.persistState();
 		this._onDidChangeState.fire(this.getState());
@@ -132,29 +175,92 @@ export class CursorAgentService extends vscode.Disposable {
 			throw new Error(vscode.l10n.t('Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN before using Cursor Agent.'));
 		}
 
-		const body: IAnthropicRequest = {
-			model,
-			system: systemPrompt,
-			max_tokens: 8192,
-			messages: this.buildRequestMessages()
-		};
-
 		const endpoint = this.resolveEndpoint(baseUrl);
-		this.log(vscode.l10n.t('Sending request to {0} with model {1}.', endpoint, model));
-		const response = await postJson<IAnthropicResponse>(endpoint, {
-			'content-type': 'application/json',
-			'anthropic-version': '2023-06-01',
-			'x-api-key': apiKey ?? '',
-			'authorization': authToken ? `Bearer ${authToken}` : ''
-		}, body);
-		this.log(vscode.l10n.t('Cursor Agent response received with status {0}.', response.statusCode));
+		const tools = this.toolService.getDefinitions();
+		const turns = this.buildInitialTurns();
 
-		const text = extractResponseText(response.body).trim();
-		if (!text) {
-			throw new Error(response.body.error?.message || vscode.l10n.t('Cursor Agent returned an empty response.'));
+		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+			const body: IAnthropicRequest = {
+				model,
+				system: systemPrompt,
+				max_tokens: 8192,
+				messages: turns,
+				tools,
+				tool_choice: { type: 'auto' }
+			};
+
+			this.log(vscode.l10n.t('Sending request to {0} with model {1}.', endpoint, model));
+			const response = await postJson<IAnthropicResponse>(endpoint, {
+				'content-type': 'application/json',
+				'anthropic-version': '2023-06-01',
+				'x-api-key': apiKey ?? '',
+				'authorization': authToken ? `Bearer ${authToken}` : ''
+			}, body);
+			this.log(vscode.l10n.t('Cursor Agent response received with status {0}.', response.statusCode));
+
+			const blocks = response.body.content ?? [];
+			const assistantText = extractResponseText(response.body).trim();
+			const toolUses = extractToolUses(blocks);
+
+			if (!toolUses.length) {
+				if (!assistantText) {
+					throw new Error(response.body.error?.message || vscode.l10n.t('Cursor Agent returned an empty response.'));
+				}
+
+				return assistantText;
+			}
+
+			if (assistantText) {
+				this.messages = [...this.messages, { role: 'assistant', content: assistantText }];
+				this.persistState();
+				this._onDidChangeState.fire(this.getState());
+			}
+
+			turns.push({
+				role: 'assistant',
+				content: blocks.map(block => {
+					if (isTextResponseBlock(block)) {
+						return { type: 'text', text: block.text };
+					}
+
+					if (isToolUseResponseBlock(block)) {
+						return {
+							type: 'tool_use',
+							id: block.id,
+							name: block.name,
+							input: block.input
+						};
+					}
+
+					return {
+						type: 'text',
+						text: ''
+					};
+				})
+			});
+
+			const toolResultBlocks: IAnthropicToolResultBlock[] = [];
+			for (const toolUse of toolUses) {
+				const result = await this.toolService.invoke(toolUse.name, toolUse.input);
+				const content = result.content || vscode.l10n.t('Tool returned no output.');
+				this.messages = [...this.messages, { role: 'tool', content, metadata: { toolName: result.toolName } }];
+				toolResultBlocks.push({
+					type: 'tool_result',
+					tool_use_id: toolUse.id,
+					content
+				});
+			}
+
+			this.persistState();
+			this._onDidChangeState.fire(this.getState());
+
+			turns.push({
+				role: 'user',
+				content: toolResultBlocks
+			});
 		}
 
-		return text;
+		throw new Error(vscode.l10n.t('Cursor Agent exceeded the maximum tool-call rounds.'));
 	}
 
 	private getConfiguration(): {
@@ -197,16 +303,23 @@ export class CursorAgentService extends vscode.Disposable {
 	}
 
 	private persistState(): void {
-		const value = this.messages.slice(-200);
+		const value = this.messages.slice(-300);
 		void this.storage.update(STORAGE_KEY, value);
 	}
 
-	private buildRequestMessages(): readonly IAnthropicMessage[] {
+	private buildInitialTurns(): IRequestTurn[] {
 		return this.messages
-			.filter(message => message.role !== 'system')
+			.filter(message => message.role !== 'system' && message.role !== 'tool')
 			.slice(-REQUEST_HISTORY_LIMIT)
-			.map<IAnthropicMessage>((message, index, array) => {
-				if (message.role === 'user' && index === array.length - 1 && this.lastRequestContext) {
+			.map<IRequestTurn>((message, index, array) => {
+				if (message.role === 'assistant') {
+					return {
+						role: 'assistant',
+						content: [{ type: 'text', text: message.content }]
+					};
+				}
+
+				if (index === array.length - 1 && this.lastRequestContext) {
 					return {
 						role: 'user',
 						content: [{
@@ -217,7 +330,7 @@ export class CursorAgentService extends vscode.Disposable {
 				}
 
 				return {
-					role: message.role === 'assistant' ? 'assistant' : 'user',
+					role: 'user',
 					content: [{ type: 'text', text: message.content }]
 				};
 			});
@@ -229,38 +342,35 @@ export class CursorAgentService extends vscode.Disposable {
 }
 
 function extractResponseText(response: IAnthropicResponse): string {
-	const anthropicText = response.content
-		?.filter(part => part.type === 'text' && typeof part.text === 'string')
-		.map(part => part.text ?? '')
+	return (response.content ?? [])
+		.filter(isTextResponseBlock)
+		.map(block => block.text)
 		.join('');
-	if (anthropicText) {
-		return anthropicText;
-	}
+}
 
-	const openAIText = response.choices
-		?.flatMap(choice => {
-			const content = choice.message?.content;
-			if (typeof content === 'string') {
-				return [content];
-			}
+function extractToolUses(blocks: readonly IAnthropicResponseBlock[]): IAnthropicToolUseBlock[] {
+	return blocks
+		.filter(isToolUseResponseBlock)
+		.map(block => ({
+			type: 'tool_use',
+			id: block.id,
+			name: block.name,
+			input: block.input
+		}));
+}
 
-			if (Array.isArray(content)) {
-				return content
-					.filter(part => part.type === 'text' && typeof part.text === 'string')
-					.map(part => part.text ?? '');
-			}
+function isTextResponseBlock(block: IAnthropicResponseBlock): block is IAnthropicResponseTextBlock {
+	return block.type === 'text' && typeof block.text === 'string';
+}
 
-			return [];
-		})
-		.join('');
-
-	return openAIText || '';
+function isToolUseResponseBlock(block: IAnthropicResponseBlock): block is IAnthropicResponseToolUseBlock {
+	return block.type === 'tool_use' && 'id' in block && typeof block.id === 'string' && 'name' in block && typeof block.name === 'string';
 }
 
 function isCursorChatMessage(value: ICursorChatMessage | undefined): value is ICursorChatMessage {
 	return Boolean(
 		value &&
-		(value.role === 'user' || value.role === 'assistant' || value.role === 'system') &&
+		(value.role === 'user' || value.role === 'assistant' || value.role === 'system' || value.role === 'tool') &&
 		typeof value.content === 'string'
 	);
 }

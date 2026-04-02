@@ -16,6 +16,12 @@
 	"command.previewReplaceSelectionWithCodeBlock": "Preview Replace Selection from Cursor Agent",
 	"command.acceptProposal": "Accept Cursor Agent Proposal",
 	"command.rejectProposal": "Reject Cursor Agent Proposal",
+	"command.analyzeCurrentContext": "Analyze Current Context with Cursor Agent",
+	"command.selectCurrentFunction": "Select Current Function",
+	"command.selectCurrentBlock": "Select Current Block",
+	"command.focusSelection": "Focus Selection",
+	"command.askAboutSelection": "Ask About Selection",
+	"command.addSelectionToChat": "Add Selection to Cursor Agent",
 	"config.systemPrompt.description": "Base system prompt sent to the Cursor Agent.",
 	"config.model.description": "Default model identifier to send to the Anthropic-compatible API.",
 	"config.baseUrl.description": "Override the Anthropic-compatible base URL. If empty, ANTHROPIC_BASE_URL is used."

@@ -25,7 +25,13 @@
     "onCommand:cursorAgent.previewInsertCodeBlock",
     "onCommand:cursorAgent.previewReplaceSelectionWithCodeBlock",
     "onCommand:cursorAgent.acceptProposal",
-    "onCommand:cursorAgent.rejectProposal"
+    "onCommand:cursorAgent.rejectProposal",
+    "onCommand:cursorAgent.analyzeCurrentContext",
+    "onCommand:cursorAgent.selectCurrentFunction",
+    "onCommand:cursorAgent.selectCurrentBlock",
+    "onCommand:cursorAgent.focusSelection",
+    "onCommand:cursorAgent.askAboutSelection",
+    "onCommand:cursorAgent.addSelectionToChat"
   ],
   "capabilities": {
     "virtualWorkspaces": true,
@@ -120,13 +126,59 @@
         "title": "%command.rejectProposal%",
         "category": "%command.category%",
         "icon": "$(close)"
+      },
+      {
+        "command": "cursorAgent.analyzeCurrentContext",
+        "title": "%command.analyzeCurrentContext%",
+        "category": "%command.category%",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "cursorAgent.selectCurrentFunction",
+        "title": "%command.selectCurrentFunction%",
+        "category": "%command.category%",
+        "icon": "$(symbol-method)"
+      },
+      {
+        "command": "cursorAgent.selectCurrentBlock",
+        "title": "%command.selectCurrentBlock%",
+        "category": "%command.category%",
+        "icon": "$(selection)"
+      },
+      {
+        "command": "cursorAgent.focusSelection",
+        "title": "%command.focusSelection%",
+        "category": "%command.category%",
+        "icon": "$(target)"
+      },
+      {
+        "command": "cursorAgent.askAboutSelection",
+        "title": "%command.askAboutSelection%",
+        "category": "%command.category%",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "cursorAgent.addSelectionToChat",
+        "title": "%command.addSelectionToChat%",
+        "category": "%command.category%",
+        "icon": "$(add)"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "cursorAgent.sendSelection",
+          "command": "cursorAgent.addSelectionToChat",
           "when": "editorHasSelection"
+        },
+        {
+          "command": "cursorAgent.askAboutSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cursorAgent.selectCurrentFunction"
+        },
+        {
+          "command": "cursorAgent.selectCurrentBlock"
         },
         {
           "command": "cursorAgent.sendCurrentFile"
@@ -156,6 +208,21 @@
         },
         {
           "command": "cursorAgent.rejectProposal"
+        },
+        {
+          "command": "cursorAgent.analyzeCurrentContext"
+        },
+        {
+          "command": "cursorAgent.selectCurrentFunction"
+        },
+        {
+          "command": "cursorAgent.selectCurrentBlock"
+        },
+        {
+          "command": "cursorAgent.focusSelection"
+        },
+        {
+          "command": "cursorAgent.askAboutSelection"
         }
       ],
       "view/title": [
@@ -165,27 +232,27 @@
           "group": "navigation"
         },
         {
-          "command": "cursorAgent.sendCurrentFile",
+          "command": "cursorAgent.showLogs",
           "when": "view == cursorAgent.sidebar",
           "group": "navigation@1"
         },
         {
-          "command": "cursorAgent.sendProblems",
+          "command": "cursorAgent.acceptProposal",
           "when": "view == cursorAgent.sidebar",
           "group": "navigation@2"
         },
         {
-          "command": "cursorAgent.showLogs",
+          "command": "cursorAgent.rejectProposal",
           "when": "view == cursorAgent.sidebar",
           "group": "navigation@3"
         },
         {
-          "command": "cursorAgent.acceptProposal",
+          "command": "cursorAgent.analyzeCurrentContext",
           "when": "view == cursorAgent.sidebar",
           "group": "navigation@4"
         },
         {
-          "command": "cursorAgent.rejectProposal",
+          "command": "cursorAgent.askAboutSelection",
           "when": "view == cursorAgent.sidebar",
           "group": "navigation@5"
         }

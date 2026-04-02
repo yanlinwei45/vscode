@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { getPreferredCodeEditor } from './editorContext';
+import { getEditorLabel, getEditorSelectionSnapshot, getPreferredCodeEditor } from './editorContext';
 
 const RECENT_FILES_KEY = 'cursorAgent.recentFiles.v1';
 const FAILED_TERMINALS_KEY = 'cursorAgent.failedTerminalCommands.v1';
@@ -35,6 +35,13 @@ interface ITerminalCapture {
 
 export interface ICursorContextState {
 	readonly summary: readonly string[];
+	readonly selection?: {
+		readonly fileLabel: string;
+		readonly language: string;
+		readonly lines: string;
+		readonly characterCount: number;
+		readonly preview: string;
+	};
 }
 
 export class CursorContextService implements vscode.Disposable {
@@ -60,6 +67,15 @@ export class CursorContextService implements vscode.Disposable {
 			this.trackEditor(editor);
 			this.fireState();
 		}));
+		this.disposables.push(vscode.window.onDidChangeTextEditorSelection(() => {
+			this.fireState();
+		}));
+		this.disposables.push(vscode.workspace.onDidChangeTextDocument(event => {
+			const activeEditor = getPreferredCodeEditor();
+			if (activeEditor && event.document.uri.toString() === activeEditor.document.uri.toString()) {
+				this.fireState();
+			}
+		}));
 		this.disposables.push(vscode.languages.onDidChangeDiagnostics(() => this.fireState()));
 		this.disposables.push(vscode.window.onDidStartTerminalShellExecution(event => this.captureTerminalExecution(event)));
 		this.disposables.push(vscode.window.onDidEndTerminalShellExecution(event => this.finalizeTerminalExecution(event)));
@@ -72,8 +88,9 @@ export class CursorContextService implements vscode.Disposable {
 	getState(): ICursorContextState {
 		const summary: string[] = [];
 		const activeEditor = getPreferredCodeEditor();
+		const selection = getEditorSelectionSnapshot(activeEditor);
 		if (activeEditor) {
-			summary.push(vscode.l10n.t('File: {0}', this.formatUri(activeEditor.document.uri)));
+			summary.push(vscode.l10n.t('File: {0}', getEditorLabel(activeEditor.document.uri)));
 		}
 
 		if (this.recentFiles.length) {
@@ -89,7 +106,16 @@ export class CursorContextService implements vscode.Disposable {
 			summary.push(vscode.l10n.t('Terminal Failures: {0}', this.failedTerminalCommands.length));
 		}
 
-		return { summary };
+		return {
+			summary,
+			selection: selection ? {
+				fileLabel: selection.fileLabel,
+				language: selection.language,
+				lines: `${selection.startLine}-${selection.endLine}`,
+				characterCount: selection.characterCount,
+				preview: selection.preview
+			} : undefined
+		};
 	}
 
 	async buildPromptContext(): Promise<string> {
@@ -374,7 +400,7 @@ export class CursorContextService implements vscode.Disposable {
 			return '';
 		}
 
-		return vscode.workspace.asRelativePath(uri, false) || uri.fsPath || uri.toString();
+		return getEditorLabel(uri);
 	}
 
 	private fireState(): void {
