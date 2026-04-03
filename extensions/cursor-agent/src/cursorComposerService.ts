@@ -89,9 +89,9 @@ export class CursorComposerService extends vscode.Disposable {
 		}
 
 		const content = [
-			`Attached selection from ${snapshot.fileLabel}`,
-			`Language: ${snapshot.language}`,
-			`Lines: ${snapshot.startLine}-${snapshot.endLine}`,
+			`\u5df2\u9644\u52a0\u9009\u533a\uff1a${snapshot.fileLabel}`,
+			`\u8bed\u8a00\uff1a${snapshot.language}`,
+			`\u884c\u53f7\uff1a${snapshot.startLine}-${snapshot.endLine}`,
 			'',
 			'```' + snapshot.language,
 			editor.document.getText(editor.selection),
@@ -102,8 +102,8 @@ export class CursorComposerService extends vscode.Disposable {
 			id: `selection:${editor.document.uri.toString()}:${editor.selection.start.line}:${editor.selection.start.character}:${editor.selection.end.line}:${editor.selection.end.character}`,
 			kind: 'selection',
 			label: snapshot.fileLabel,
-			detail: vscode.l10n.t('Selection • Lines {0}-{1}', snapshot.startLine, snapshot.endLine),
-			preview: snapshot.preview || vscode.l10n.t('Empty selection'),
+			detail: vscode.l10n.t('\u9009\u533a \u00b7 \u7b2c {0}-{1} \u884c', snapshot.startLine, snapshot.endLine),
+			preview: snapshot.preview || vscode.l10n.t('\u7a7a\u9009\u533a'),
 			content
 		});
 		return true;
@@ -121,11 +121,11 @@ export class CursorComposerService extends vscode.Disposable {
 			id: `file:${document.uri.toString()}`,
 			kind: 'file',
 			label: getEditorLabel(document.uri),
-			detail: vscode.l10n.t('Current File • {0}', language),
-			preview: truncateText(document.getText().trim(), MAX_FILE_PREVIEW) || vscode.l10n.t('Empty file'),
+			detail: vscode.l10n.t('\u5f53\u524d\u6587\u4ef6 \u00b7 {0}', language),
+			preview: truncateText(document.getText().trim(), MAX_FILE_PREVIEW) || vscode.l10n.t('\u7a7a\u6587\u4ef6'),
 			content: [
-				`Attached file: ${getEditorLabel(document.uri)}`,
-				`Language: ${language}`,
+				`\u5df2\u9644\u52a0\u6587\u4ef6\uff1a${getEditorLabel(document.uri)}`,
+				`\u8bed\u8a00\uff1a${language}`,
 				'',
 				'```' + language,
 				document.getText(),
@@ -150,17 +150,17 @@ export class CursorComposerService extends vscode.Disposable {
 			const line = diagnostic.range.start.line + 1;
 			const column = diagnostic.range.start.character + 1;
 			const source = diagnostic.source ? ` (${diagnostic.source})` : '';
-			return `${index + 1}. [${formatSeverity(diagnostic.severity)}] Line ${line}, Column ${column}${source}: ${diagnostic.message}`;
+			return `${index + 1}. [${formatSeverity(diagnostic.severity)}] \u7b2c ${line} \u884c\uff0c\u7b2c ${column} \u5217${source}\uff1a${diagnostic.message}`;
 		});
 
 		this.upsertAttachment({
 			id: `problems:${editor.document.uri.toString()}`,
 			kind: 'problems',
 			label: getEditorLabel(editor.document.uri),
-			detail: vscode.l10n.t('Problems • {0}', diagnostics.length),
+			detail: vscode.l10n.t('\u95ee\u9898 \u00b7 {0}', diagnostics.length),
 			preview: truncateText(lines.join('\n'), MAX_PROBLEM_PREVIEW),
 			content: [
-				`Attached diagnostics for: ${getEditorLabel(editor.document.uri)}`,
+				`\u5df2\u9644\u52a0\u8bca\u65ad\u4fe1\u606f\uff1a${getEditorLabel(editor.document.uri)}`,
 				'',
 				...lines
 			].join('\n')
@@ -174,7 +174,7 @@ export class CursorComposerService extends vscode.Disposable {
 		}
 
 		return [
-			'Attached chat context:',
+			'\u5df2\u9644\u52a0\u5230\u5bf9\u8bdd\u7684\u4e0a\u4e0b\u6587\uff1a',
 			...this.attachments.map(attachment => attachment.content)
 		].join('\n\n');
 	}
@@ -197,20 +197,20 @@ function truncateText(value: string, maxLength: number): string {
 		return value;
 	}
 
-	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[truncated]`;
+	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[\u5df2\u622a\u65ad]`;
 }
 
 function formatSeverity(severity: vscode.DiagnosticSeverity): string {
 	switch (severity) {
 		case vscode.DiagnosticSeverity.Error:
-			return 'Error';
+			return '\u9519\u8bef';
 		case vscode.DiagnosticSeverity.Warning:
-			return 'Warning';
+			return '\u8b66\u544a';
 		case vscode.DiagnosticSeverity.Information:
-			return 'Information';
+			return '\u4fe1\u606f';
 		case vscode.DiagnosticSeverity.Hint:
-			return 'Hint';
+			return '\u63d0\u793a';
 		default:
-			return 'Unknown';
+			return '\u672a\u77e5';
 	}
 }

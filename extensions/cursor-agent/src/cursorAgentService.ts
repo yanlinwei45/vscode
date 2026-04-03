@@ -25,6 +25,7 @@ export interface ICursorChatState {
 	readonly messages: readonly ICursorChatMessage[];
 	readonly busy: boolean;
 	readonly lastRequestContext?: string;
+	readonly pendingToolNames?: readonly string[];
 }
 
 interface IAnthropicTextBlock {
@@ -107,6 +108,7 @@ export class CursorAgentService extends vscode.Disposable {
 	private messages: ICursorChatMessage[] = [];
 	private busy = false;
 	private lastRequestContext: string | undefined;
+	private pendingToolNames: string[] = [];
 
 	constructor(
 		private readonly storage: vscode.Memento,
@@ -118,14 +120,15 @@ export class CursorAgentService extends vscode.Disposable {
 		});
 
 		this.messages = this.restoreMessages();
-		this.log(vscode.l10n.t('Cursor Agent restored {0} message(s).', this.messages.length));
+		this.log(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u5df2\u6062\u590d {0} \u6761\u6d88\u606f\u3002', this.messages.length));
 	}
 
 	getState(): ICursorChatState {
 		return {
 			messages: this.messages,
 			busy: this.busy,
-			lastRequestContext: this.lastRequestContext
+			lastRequestContext: this.lastRequestContext,
+			pendingToolNames: this.pendingToolNames
 		};
 	}
 
@@ -133,8 +136,9 @@ export class CursorAgentService extends vscode.Disposable {
 		this.messages = [];
 		this.busy = false;
 		this.lastRequestContext = undefined;
+		this.pendingToolNames = [];
 		this.persistState();
-		this.log(vscode.l10n.t('Cursor Agent conversation reset.'));
+		this.log(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u5bf9\u8bdd\u5df2\u91cd\u7f6e\u3002'));
 		this._onDidChangeState.fire(this.getState());
 	}
 
@@ -145,7 +149,8 @@ export class CursorAgentService extends vscode.Disposable {
 		}
 
 		this.lastRequestContext = requestContext?.trim() || undefined;
-		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('Use the attached context and continue.') }];
+		this.pendingToolNames = [];
+		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002') }];
 		this.busy = true;
 		this.persistState();
 		this._onDidChangeState.fire(this.getState());
@@ -155,12 +160,13 @@ export class CursorAgentService extends vscode.Disposable {
 			this.messages = [...this.messages, { role: 'assistant', content }];
 			this.persistState();
 		} catch (error) {
-			const message = error instanceof Error ? error.message : vscode.l10n.t('Cursor Agent request failed.');
-			this.log(vscode.l10n.t('Cursor Agent request failed: {0}', message));
-			this.messages = [...this.messages, { role: 'assistant', content: `Error: ${message}` }];
+			const message = error instanceof Error ? error.message : vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8bf7\u6c42\u5931\u8d25\u3002');
+			this.log(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8bf7\u6c42\u5931\u8d25\uff1a{0}', message));
+			this.messages = [...this.messages, { role: 'assistant', content: `\u9519\u8bef\uff1a${message}` }];
 			this.persistState();
 		} finally {
 			this.busy = false;
+			this.pendingToolNames = [];
 			this._onDidChangeState.fire(this.getState());
 		}
 	}
@@ -172,7 +178,7 @@ export class CursorAgentService extends vscode.Disposable {
 	private async requestAssistantResponse(): Promise<string> {
 		const { baseUrl, apiKey, authToken, model, systemPrompt } = this.getConfiguration();
 		if (!apiKey && !authToken) {
-			throw new Error(vscode.l10n.t('Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN before using Cursor Agent.'));
+			throw new Error(vscode.l10n.t('\u4f7f\u7528 Cursor \u667a\u80fd\u4f53\u524d\uff0c\u8bf7\u5148\u8bbe\u7f6e ANTHROPIC_API_KEY \u6216 ANTHROPIC_AUTH_TOKEN\u3002'));
 		}
 
 		const endpoint = this.resolveEndpoint(baseUrl);
@@ -189,14 +195,14 @@ export class CursorAgentService extends vscode.Disposable {
 				tool_choice: { type: 'auto' }
 			};
 
-			this.log(vscode.l10n.t('Sending request to {0} with model {1}.', endpoint, model));
+			this.log(vscode.l10n.t('\u6b63\u5728\u5411 {0} \u53d1\u9001\u8bf7\u6c42\uff0c\u6a21\u578b\uff1a{1}\u3002', endpoint, model));
 			const response = await postJson<IAnthropicResponse>(endpoint, {
 				'content-type': 'application/json',
 				'anthropic-version': '2023-06-01',
 				'x-api-key': apiKey ?? '',
 				'authorization': authToken ? `Bearer ${authToken}` : ''
 			}, body);
-			this.log(vscode.l10n.t('Cursor Agent response received with status {0}.', response.statusCode));
+			this.log(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u5df2\u6536\u5230\u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
 
 			const blocks = response.body.content ?? [];
 			const assistantText = extractResponseText(response.body).trim();
@@ -204,7 +210,7 @@ export class CursorAgentService extends vscode.Disposable {
 
 			if (!toolUses.length) {
 				if (!assistantText) {
-					throw new Error(response.body.error?.message || vscode.l10n.t('Cursor Agent returned an empty response.'));
+					throw new Error(response.body.error?.message || vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8fd4\u56de\u4e86\u7a7a\u54cd\u5e94\u3002'));
 				}
 
 				return assistantText;
@@ -240,17 +246,24 @@ export class CursorAgentService extends vscode.Disposable {
 			});
 
 			const toolResultBlocks: IAnthropicToolResultBlock[] = [];
-			for (const toolUse of toolUses) {
+			const pendingToolNames = toolUses.map(toolUse => toolUse.name);
+			this.pendingToolNames = [...pendingToolNames];
+			this._onDidChangeState.fire(this.getState());
+			for (let index = 0; index < toolUses.length; index++) {
+				const toolUse = toolUses[index];
 				const result = await this.toolService.invoke(toolUse.name, toolUse.input);
-				const content = result.content || vscode.l10n.t('Tool returned no output.');
+				const content = result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
 				this.messages = [...this.messages, { role: 'tool', content, metadata: { toolName: result.toolName } }];
+				this.pendingToolNames = pendingToolNames.slice(index + 1);
 				toolResultBlocks.push({
 					type: 'tool_result',
 					tool_use_id: toolUse.id,
 					content
 				});
+				this._onDidChangeState.fire(this.getState());
 			}
 
+			this.pendingToolNames = [];
 			this.persistState();
 			this._onDidChangeState.fire(this.getState());
 
@@ -260,7 +273,7 @@ export class CursorAgentService extends vscode.Disposable {
 			});
 		}
 
-		throw new Error(vscode.l10n.t('Cursor Agent exceeded the maximum tool-call rounds.'));
+		throw new Error(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8d85\u8fc7\u4e86\u6700\u5927\u5de5\u5177\u8c03\u7528\u8f6e\u6570\u3002'));
 	}
 
 	private getConfiguration(): {
@@ -273,7 +286,7 @@ export class CursorAgentService extends vscode.Disposable {
 		const configuration = vscode.workspace.getConfiguration('cursorAgent');
 		const configuredBaseUrl = configuration.get<string>('baseUrl')?.trim();
 		const model = configuration.get<string>('model')?.trim() || 'claude-sonnet-4-20250514';
-		const systemPrompt = configuration.get<string>('systemPrompt')?.trim() || vscode.l10n.t('You are Cursor, an expert coding assistant inside VS Code. Be concise, practical, and code-focused.');
+		const systemPrompt = configuration.get<string>('systemPrompt')?.trim() || vscode.l10n.t('\u4f60\u662f Cursor\uff0c\u4e00\u4e2a\u5728 VS Code \u4e2d\u5de5\u4f5c\u7684\u8d44\u6df1\u7f16\u7801\u52a9\u624b\u3002\u8bf7\u4fdd\u6301\u7b80\u6d01\u3001\u52a1\u5b9e\uff0c\u5e76\u4e13\u6ce8\u4e8e\u4ee3\u7801\u4e0e\u6267\u884c\u3002');
 
 		return {
 			baseUrl: configuredBaseUrl || process.env['ANTHROPIC_BASE_URL']?.trim() || 'https://api.anthropic.com',
@@ -324,7 +337,7 @@ export class CursorAgentService extends vscode.Disposable {
 						role: 'user',
 						content: [{
 							type: 'text',
-							text: `${message.content}\n\nAttached context:\n${this.lastRequestContext}`
+							text: `${message.content}\n\n\u9644\u52a0\u4e0a\u4e0b\u6587\uff1a\n${this.lastRequestContext}`
 						}]
 					};
 				}
@@ -402,7 +415,7 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 			response.on('end', () => {
 				const text = Buffer.concat(chunks).toString('utf8');
 				if (!text) {
-					reject(new Error(vscode.l10n.t('Cursor Agent request failed with status {0}.', response.statusCode ?? 0)));
+					reject(new Error(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
 					return;
 				}
 
@@ -410,7 +423,7 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 					const parsed = JSON.parse(text) as T;
 					if ((response.statusCode ?? 500) >= 400) {
 						const errorMessage = (parsed as IAnthropicResponse).error?.message;
-						reject(new Error(errorMessage || vscode.l10n.t('Cursor Agent request failed with status {0}.', response.statusCode ?? 0)));
+						reject(new Error(errorMessage || vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
 						return;
 					}
 
@@ -426,7 +439,7 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 
 		request.on('error', reject);
 		request.setTimeout(REQUEST_TIMEOUT_MS, () => {
-			request.destroy(new Error(vscode.l10n.t('Cursor Agent request timed out after {0} seconds.', Math.floor(REQUEST_TIMEOUT_MS / 1000))));
+			request.destroy(new Error(vscode.l10n.t('Cursor \u667a\u80fd\u4f53\u8bf7\u6c42\u8d85\u65f6\uff0c\u5df2\u7b49\u5f85 {0} \u79d2\u3002', Math.floor(REQUEST_TIMEOUT_MS / 1000))));
 		});
 		request.write(payload);
 		request.end();

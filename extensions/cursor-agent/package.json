@@ -14,6 +14,7 @@
   "icon": "media/activitybar.svg",
   "main": "./out/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onView:cursorAgent.sidebar",
     "onCommand:cursorAgent.open",
     "onCommand:cursorAgent.sendSelection",
@@ -31,7 +32,10 @@
     "onCommand:cursorAgent.selectCurrentBlock",
     "onCommand:cursorAgent.focusSelection",
     "onCommand:cursorAgent.askAboutSelection",
-    "onCommand:cursorAgent.addSelectionToChat"
+    "onCommand:cursorAgent.addSelectionToChat",
+    "onCommand:cursorAgent.editSelection",
+    "onCommand:cursorAgent.explainSelection",
+    "onCommand:cursorAgent.fixCurrentFile"
   ],
   "capabilities": {
     "virtualWorkspaces": true,
@@ -162,12 +166,38 @@
         "title": "%command.addSelectionToChat%",
         "category": "%command.category%",
         "icon": "$(add)"
+      },
+      {
+        "command": "cursorAgent.editSelection",
+        "title": "%command.editSelection%",
+        "category": "%command.category%",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "cursorAgent.explainSelection",
+        "title": "%command.explainSelection%",
+        "category": "%command.category%",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "cursorAgent.fixCurrentFile",
+        "title": "%command.fixCurrentFile%",
+        "category": "%command.category%",
+        "icon": "$(wrench)"
       }
     ],
     "menus": {
       "editor/context": [
         {
           "command": "cursorAgent.addSelectionToChat",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cursorAgent.editSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cursorAgent.explainSelection",
           "when": "editorHasSelection"
         },
         {
@@ -223,6 +253,15 @@
         },
         {
           "command": "cursorAgent.askAboutSelection"
+        },
+        {
+          "command": "cursorAgent.editSelection"
+        },
+        {
+          "command": "cursorAgent.explainSelection"
+        },
+        {
+          "command": "cursorAgent.fixCurrentFile"
         }
       ],
       "view/title": [
@@ -230,40 +269,15 @@
           "command": "cursorAgent.newChat",
           "when": "view == cursorAgent.sidebar",
           "group": "navigation"
-        },
-        {
-          "command": "cursorAgent.showLogs",
-          "when": "view == cursorAgent.sidebar",
-          "group": "navigation@1"
-        },
-        {
-          "command": "cursorAgent.acceptProposal",
-          "when": "view == cursorAgent.sidebar",
-          "group": "navigation@2"
-        },
-        {
-          "command": "cursorAgent.rejectProposal",
-          "when": "view == cursorAgent.sidebar",
-          "group": "navigation@3"
-        },
-        {
-          "command": "cursorAgent.analyzeCurrentContext",
-          "when": "view == cursorAgent.sidebar",
-          "group": "navigation@4"
-        },
-        {
-          "command": "cursorAgent.askAboutSelection",
-          "when": "view == cursorAgent.sidebar",
-          "group": "navigation@5"
         }
       ]
     },
     "configuration": {
-      "title": "Cursor Agent",
+      "title": "Cursor 智能体",
       "properties": {
         "cursorAgent.systemPrompt": {
           "type": "string",
-          "default": "You are Cursor, an expert coding assistant inside VS Code. Be concise, practical, and code-focused.",
+          "default": "你是 Cursor，一个在 VS Code 中工作的资深编码助手。请保持简洁、务实，并专注于代码与执行。",
           "description": "%config.systemPrompt.description%",
           "scope": "application"
         },

@@ -205,5 +205,5 @@ function truncateText(value: string, maxLength: number): string {
 		return value;
 	}
 
-	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[truncated]`;
+	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[\u5df2\u622a\u65ad]`;
 }

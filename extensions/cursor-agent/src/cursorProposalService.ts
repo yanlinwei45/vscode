@@ -12,6 +12,7 @@ export interface ICursorProposalState {
 	readonly active: boolean;
 	readonly targetLabel?: string;
 	readonly mode?: 'replace' | 'insert';
+	readonly reopenable?: boolean;
 }
 
 interface ICursorProposal {
@@ -50,19 +51,30 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 		return {
 			active: Boolean(proposal),
 			targetLabel: proposal?.targetLabel,
-			mode: proposal?.mode
+			mode: proposal?.mode,
+			reopenable: Boolean(proposal)
 		};
+	}
+
+	reset(): void {
+		if (!this.activeProposalId && !this.proposals.size) {
+			return;
+		}
+
+		this.proposals.clear();
+		this.activeProposalId = undefined;
+		this.fireState();
 	}
 
 	async createProposalFromCodeBlock(code: string, mode: 'replace' | 'insert'): Promise<void> {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('Open a text editor before creating a proposal from Cursor Agent.'));
+			void vscode.window.showInformationMessage(vscode.l10n.t('\u8bf7\u5148\u6253\u5f00\u4e00\u4e2a\u6587\u672c\u7f16\u8f91\u5668\uff0c\u518d\u521b\u5efa Cursor \u667a\u80fd\u4f53\u7684\u7f16\u8f91\u63d0\u8bae\u3002'));
 			return;
 		}
 
 		if (mode === 'replace' && editor.selections.every(selection => selection.isEmpty)) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('Select text before creating a replacement proposal from Cursor Agent.'));
+			void vscode.window.showInformationMessage(vscode.l10n.t('\u8bf7\u5148\u9009\u4e2d\u8981\u66ff\u6362\u7684\u6587\u672c\uff0c\u518d\u521b\u5efa\u7f16\u8f91\u63d0\u8bae\u3002'));
 			return;
 		}
 
@@ -91,10 +103,10 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 			'vscode.diff',
 			originalUri,
 			proposalUri,
-			vscode.l10n.t('Cursor Proposal: {0}', targetLabel),
+			vscode.l10n.t('Cursor \u63d0\u8bae\uff1a{0}', targetLabel),
 			{ preview: true }
 		);
-		this.log(vscode.l10n.t('Opened proposal diff for {0}.', targetLabel));
+		this.log(vscode.l10n.t('\u5df2\u6253\u5f00 {0} \u7684\u63d0\u8bae\u5bf9\u6bd4\u89c6\u56fe\u3002', targetLabel));
 	}
 
 	async acceptActiveProposal(): Promise<void> {
@@ -110,7 +122,7 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 			editBuilder.replace(fullRange, proposal.proposedText);
 		});
 
-		this.log(vscode.l10n.t('Accepted proposal for {0}.', proposal.targetLabel));
+		this.log(vscode.l10n.t('\u5df2\u63a5\u53d7 {0} \u7684\u7f16\u8f91\u63d0\u8bae\u3002', proposal.targetLabel));
 		this.clearActiveProposal();
 	}
 
@@ -120,8 +132,25 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 			return;
 		}
 
-		this.log(vscode.l10n.t('Rejected proposal for {0}.', proposal.targetLabel));
+		this.log(vscode.l10n.t('\u5df2\u62d2\u7edd {0} \u7684\u7f16\u8f91\u63d0\u8bae\u3002', proposal.targetLabel));
 		this.clearActiveProposal();
+	}
+
+	async reopenActiveProposal(): Promise<void> {
+		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+		if (!proposal) {
+			return;
+		}
+
+		const proposalUri = this.getProposalUri(proposal.id, proposal.originalUri);
+		this._onDidChange.fire(proposalUri);
+		await vscode.commands.executeCommand(
+			'vscode.diff',
+			proposal.originalUri,
+			proposalUri,
+			vscode.l10n.t('Cursor \u63d0\u8bae\uff1a{0}', proposal.targetLabel),
+			{ preview: true }
+		);
 	}
 
 	provideTextDocumentContent(uri: vscode.Uri): string {

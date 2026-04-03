@@ -45,7 +45,7 @@ export class CursorToolService {
 		return [
 			{
 				name: 'get_active_editor_context',
-				description: 'Get the current code editor file, selection, and lightweight context.',
+				description: '\u83b7\u53d6\u5f53\u524d\u4ee3\u7801\u7f16\u8f91\u5668\u7684\u6587\u4ef6\u3001\u9009\u533a\u548c\u8f7b\u91cf\u4e0a\u4e0b\u6587\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {}
@@ -53,62 +53,62 @@ export class CursorToolService {
 			},
 			{
 				name: 'read_file',
-				description: 'Read a file from the workspace by relative path.',
+				description: '\u6309\u5de5\u4f5c\u533a\u76f8\u5bf9\u8def\u5f84\u8bfb\u53d6\u6587\u4ef6\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Workspace-relative file path.' }
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u6587\u4ef6\u8def\u5f84\u3002' }
 					},
 					required: ['path']
 				}
 			},
 			{
 				name: 'list_directory',
-				description: 'List files and directories for a workspace-relative directory path.',
+				description: '\u5217\u51fa\u5de5\u4f5c\u533a\u76f8\u5bf9\u76ee\u5f55\u4e0b\u7684\u6587\u4ef6\u548c\u5b50\u76ee\u5f55\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Workspace-relative directory path. Use . for workspace root.' }
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u76ee\u5f55\u8def\u5f84\u3002\u5de5\u4f5c\u533a\u6839\u76ee\u5f55\u8bf7\u4f7f\u7528 .\u3002' }
 					}
 				}
 			},
 			{
 				name: 'search_workspace',
-				description: 'Search text across workspace files.',
+				description: '\u5728\u5de5\u4f5c\u533a\u6587\u4ef6\u4e2d\u641c\u7d22\u6587\u672c\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						query: { type: 'string', description: 'Plain text to search for.' }
+						query: { type: 'string', description: '\u8981\u641c\u7d22\u7684\u7eaf\u6587\u672c\u3002' }
 					},
 					required: ['query']
 				}
 			},
 			{
 				name: 'get_diagnostics',
-				description: 'Get diagnostics for the active file or a specific workspace-relative file path.',
+				description: '\u83b7\u53d6\u5f53\u524d\u6587\u4ef6\u6216\u6307\u5b9a\u5de5\u4f5c\u533a\u76f8\u5bf9\u8def\u5f84\u6587\u4ef6\u7684\u8bca\u65ad\u4fe1\u606f\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Optional workspace-relative file path.' }
+						path: { type: 'string', description: '\u53ef\u9009\u7684\u5de5\u4f5c\u533a\u76f8\u5bf9\u6587\u4ef6\u8def\u5f84\u3002' }
 					}
 				}
 			},
 			{
 				name: 'open_file',
-				description: 'Open a file in the editor, optionally at a line and column.',
+				description: '\u5728\u7f16\u8f91\u5668\u4e2d\u6253\u5f00\u6587\u4ef6\uff0c\u53ef\u9009\u6307\u5b9a\u884c\u53f7\u548c\u5217\u53f7\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Workspace-relative file path.' },
-						line: { type: 'number', description: '1-based line number.' },
-						column: { type: 'number', description: '1-based column number.' }
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u6587\u4ef6\u8def\u5f84\u3002' },
+						line: { type: 'number', description: '\u4ece 1 \u5f00\u59cb\u7684\u884c\u53f7\u3002' },
+						column: { type: 'number', description: '\u4ece 1 \u5f00\u59cb\u7684\u5217\u53f7\u3002' }
 					},
 					required: ['path']
 				}
 			},
 			{
 				name: 'select_editor_range',
-				description: 'Select a range in the currently open code editor.',
+				description: '\u5728\u5f53\u524d\u6253\u5f00\u7684\u4ee3\u7801\u7f16\u8f91\u5668\u4e2d\u9009\u4e2d\u6307\u5b9a\u8303\u56f4\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
@@ -122,7 +122,7 @@ export class CursorToolService {
 			},
 			{
 				name: 'select_current_function',
-				description: 'Select the nearest current function or method around the cursor.',
+				description: '\u9009\u4e2d\u5149\u6807\u9644\u8fd1\u7684\u5f53\u524d\u51fd\u6570\u6216\u65b9\u6cd5\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {}
@@ -130,7 +130,7 @@ export class CursorToolService {
 			},
 			{
 				name: 'select_current_block',
-				description: 'Expand the current selection to the next semantic block.',
+				description: '\u5c06\u5f53\u524d\u9009\u533a\u6269\u5c55\u5230\u4e0b\u4e00\u4e2a\u8bed\u4e49\u4ee3\u7801\u5757\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {}
@@ -138,7 +138,7 @@ export class CursorToolService {
 			},
 			{
 				name: 'reveal_range',
-				description: 'Reveal a range in the active editor without changing file contents.',
+				description: '\u5728\u5f53\u524d\u7f16\u8f91\u5668\u4e2d\u5b9a\u4f4d\u5230\u6307\u5b9a\u8303\u56f4\uff0c\u4e0d\u4fee\u6539\u6587\u4ef6\u5185\u5bb9\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
@@ -152,62 +152,62 @@ export class CursorToolService {
 			},
 			{
 				name: 'create_edit_proposal',
-				description: 'Create a diff preview proposal in the current code editor using provided code.',
+				description: '\u57fa\u4e8e\u7ed9\u5b9a\u4ee3\u7801\u5728\u5f53\u524d\u7f16\u8f91\u5668\u4e2d\u521b\u5efa\u4e00\u4e2a\u53ef\u9884\u89c8\u7684\u7f16\u8f91\u63d0\u8bae\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						code: { type: 'string', description: 'Code to apply.' },
-						mode: { type: 'string', enum: ['insert', 'replace'], description: 'Whether to insert at cursor or replace current selection.' }
+						code: { type: 'string', description: '\u8981\u5e94\u7528\u7684\u4ee3\u7801\u3002' },
+						mode: { type: 'string', enum: ['insert', 'replace'], description: '\u662f\u5728\u5149\u6807\u5904\u63d2\u5165\uff0c\u8fd8\u662f\u66ff\u6362\u5f53\u524d\u9009\u533a\u3002' }
 					},
 					required: ['code', 'mode']
 				}
 			},
 			{
 				name: 'write_file',
-				description: 'Overwrite a workspace file with complete content.',
+				description: '\u7528\u5b8c\u6574\u5185\u5bb9\u8986\u76d6\u4e00\u4e2a\u5de5\u4f5c\u533a\u6587\u4ef6\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Workspace-relative file path.' },
-						content: { type: 'string', description: 'Full new file content.' }
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u6587\u4ef6\u8def\u5f84\u3002' },
+						content: { type: 'string', description: '\u5b8c\u6574\u7684\u65b0\u6587\u4ef6\u5185\u5bb9\u3002' }
 					},
 					required: ['path', 'content']
 				}
 			},
 			{
 				name: 'create_file',
-				description: 'Create a new workspace file with content. Fails if the file already exists.',
+				description: '\u521b\u5efa\u4e00\u4e2a\u5e26\u5185\u5bb9\u7684\u65b0\u5de5\u4f5c\u533a\u6587\u4ef6\uff1b\u5982\u679c\u6587\u4ef6\u5df2\u5b58\u5728\u5219\u5931\u8d25\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Workspace-relative file path.' },
-						content: { type: 'string', description: 'Initial file content.' }
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u6587\u4ef6\u8def\u5f84\u3002' },
+						content: { type: 'string', description: '\u521d\u59cb\u6587\u4ef6\u5185\u5bb9\u3002' }
 					},
 					required: ['path', 'content']
 				}
 			},
 			{
 				name: 'replace_in_file',
-				description: 'Replace exact text in a workspace file.',
+				description: '\u5728\u5de5\u4f5c\u533a\u6587\u4ef6\u4e2d\u66ff\u6362\u7cbe\u786e\u6587\u672c\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						path: { type: 'string', description: 'Workspace-relative file path.' },
-						search: { type: 'string', description: 'Exact text to replace.' },
-						replace: { type: 'string', description: 'Replacement text.' },
-						all: { type: 'boolean', description: 'Replace all occurrences instead of the first one.' }
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u6587\u4ef6\u8def\u5f84\u3002' },
+						search: { type: 'string', description: '\u8981\u66ff\u6362\u7684\u7cbe\u786e\u6587\u672c\u3002' },
+						replace: { type: 'string', description: '\u66ff\u6362\u540e\u7684\u6587\u672c\u3002' },
+						all: { type: 'boolean', description: '\u662f\u5426\u66ff\u6362\u5168\u90e8\u5339\u914d\uff0c\u800c\u4e0d\u662f\u4ec5\u66ff\u6362\u7b2c\u4e00\u4e2a\u3002' }
 					},
 					required: ['path', 'search', 'replace']
 				}
 			},
 			{
 				name: 'run_command',
-				description: 'Run a safe shell command in an integrated terminal with shell integration and return the output summary.',
+				description: '\u5728\u96c6\u6210\u7ec8\u7aef\u4e2d\u8fd0\u884c\u5b89\u5168\u7684 shell \u547d\u4ee4\uff0c\u5e76\u8fd4\u56de\u8f93\u51fa\u6458\u8981\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						command: { type: 'string', description: 'Single safe command line to run. No pipes, chaining, redirects, or subshells.' },
-						cwd: { type: 'string', description: 'Optional workspace-relative working directory.' }
+						command: { type: 'string', description: '\u8981\u8fd0\u884c\u7684\u4e00\u6761\u5b89\u5168\u547d\u4ee4\uff0c\u4e0d\u80fd\u5305\u542b\u7ba1\u9053\u3001\u94fe\u5f0f\u6267\u884c\u3001\u91cd\u5b9a\u5411\u6216\u5b50 shell\u3002' },
+						cwd: { type: 'string', description: '\u53ef\u9009\u7684\u5de5\u4f5c\u533a\u76f8\u5bf9\u5de5\u4f5c\u76ee\u5f55\u3002' }
 					},
 					required: ['command']
 				}
@@ -216,7 +216,7 @@ export class CursorToolService {
 	}
 
 	async invoke(toolName: string, input: unknown): Promise<ICursorToolCallResult> {
-		this.log(vscode.l10n.t('Invoking tool {0}.', toolName));
+		this.log(vscode.l10n.t('\u6b63\u5728\u8c03\u7528\u5de5\u5177 {0}\u3002', toolName));
 		switch (toolName) {
 			case 'get_active_editor_context':
 				return { toolName, content: await this.contextService.buildPromptContext() };
@@ -249,7 +249,7 @@ export class CursorToolService {
 			case 'run_command':
 				return { toolName, content: await this.runCommand(asRecord(input)) };
 			default:
-				throw new Error(vscode.l10n.t('Unknown tool: {0}', toolName));
+				throw new Error(vscode.l10n.t('\u672a\u77e5\u5de5\u5177\uff1a{0}', toolName));
 		}
 	}
 
@@ -264,7 +264,7 @@ export class CursorToolService {
 		const entries = await vscode.workspace.fs.readDirectory(uri);
 		return entries
 			.slice(0, MAX_DIRECTORY_ENTRIES)
-			.map(([name, type]) => `${type === vscode.FileType.Directory ? 'dir' : 'file'} ${name}`)
+			.map(([name, type]) => `${type === vscode.FileType.Directory ? '\u76ee\u5f55' : '\u6587\u4ef6'} ${name}`)
 			.join('\n');
 	}
 
@@ -295,7 +295,7 @@ export class CursorToolService {
 			}
 		}
 
-		return results.length ? results.join('\n') : vscode.l10n.t('No matches found.');
+		return results.length ? results.join('\n') : vscode.l10n.t('\u6ca1\u6709\u627e\u5230\u5339\u914d\u7ed3\u679c\u3002');
 	}
 
 	private async getDiagnostics(pathInput?: string): Promise<string> {
@@ -307,12 +307,12 @@ export class CursorToolService {
 		}
 
 		if (!targetUri) {
-			return vscode.l10n.t('No active code editor.');
+			return vscode.l10n.t('\u5f53\u524d\u6ca1\u6709\u6d3b\u52a8\u7684\u4ee3\u7801\u7f16\u8f91\u5668\u3002');
 		}
 
 		const diagnostics = vscode.languages.getDiagnostics(targetUri);
 		if (!diagnostics.length) {
-			return vscode.l10n.t('No diagnostics found.');
+			return vscode.l10n.t('\u6ca1\u6709\u8bca\u65ad\u4fe1\u606f\u3002');
 		}
 
 		return diagnostics.map(diagnostic => {
@@ -330,60 +330,60 @@ export class CursorToolService {
 			preview: false,
 			selection: new vscode.Range(position, position)
 		});
-		return vscode.l10n.t('Opened {0} at line {1}, column {2}.', getEditorLabel(uri), line, column);
+		return vscode.l10n.t('\u5df2\u6253\u5f00 {0}\uff0c\u5b9a\u4f4d\u5230\u7b2c {1} \u884c\u3001\u7b2c {2} \u5217\u3002', getEditorLabel(uri), line, column);
 	}
 
 	private async selectEditorRange(input: Record<string, unknown>): Promise<string> {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			return vscode.l10n.t('No active code editor.');
+			return vscode.l10n.t('\u5f53\u524d\u6ca1\u6709\u6d3b\u52a8\u7684\u4ee3\u7801\u7f16\u8f91\u5668\u3002');
 		}
 
 		const range = this.createRange(input);
 		setEditorRangeSelection(editor, range);
-		return vscode.l10n.t('Selected {0}.', formatRange(range));
+		return vscode.l10n.t('\u5df2\u9009\u4e2d {0}\u3002', formatRange(range));
 	}
 
 	private async selectCurrentFunction(): Promise<string> {
 		const editor = getPreferredCodeEditor();
 		const range = await selectCurrentFunction(editor);
 		if (!range) {
-			return vscode.l10n.t('No function or method found at the cursor.');
+			return vscode.l10n.t('\u5f53\u524d\u5149\u6807\u4f4d\u7f6e\u6ca1\u6709\u627e\u5230\u51fd\u6570\u6216\u65b9\u6cd5\u3002');
 		}
 
-		return vscode.l10n.t('Selected current function at {0}.', formatRange(range));
+		return vscode.l10n.t('\u5df2\u9009\u4e2d\u5f53\u524d\u51fd\u6570\uff1a{0}\u3002', formatRange(range));
 	}
 
 	private async selectCurrentBlock(): Promise<string> {
 		const editor = getPreferredCodeEditor();
 		const range = await selectCurrentBlock(editor);
 		if (!range) {
-			return vscode.l10n.t('No semantic block was found for the current cursor position.');
+			return vscode.l10n.t('\u5f53\u524d\u5149\u6807\u4f4d\u7f6e\u6ca1\u6709\u627e\u5230\u53ef\u8bc6\u522b\u7684\u4ee3\u7801\u5757\u3002');
 		}
 
-		return vscode.l10n.t('Expanded selection to {0}.', formatRange(range));
+		return vscode.l10n.t('\u5df2\u5c06\u9009\u533a\u6269\u5c55\u5230 {0}\u3002', formatRange(range));
 	}
 
 	private async revealRange(input: Record<string, unknown>): Promise<string> {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			return vscode.l10n.t('No active code editor.');
+			return vscode.l10n.t('\u5f53\u524d\u6ca1\u6709\u6d3b\u52a8\u7684\u4ee3\u7801\u7f16\u8f91\u5668\u3002');
 		}
 
 		const range = this.createRange(input);
 		revealEditorRange(editor, range);
-		return vscode.l10n.t('Revealed {0}.', formatRange(range));
+		return vscode.l10n.t('\u5df2\u5b9a\u4f4d\u5230 {0}\u3002', formatRange(range));
 	}
 
 	private async createEditProposal(input: Record<string, unknown>): Promise<string> {
 		const code = asString(input.code, 'code');
 		const mode = asString(input.mode, 'mode');
 		if (mode !== 'insert' && mode !== 'replace') {
-			throw new Error(vscode.l10n.t('mode must be insert or replace.'));
+			throw new Error(vscode.l10n.t('mode \u5fc5\u987b\u662f insert \u6216 replace\u3002'));
 		}
 
 		await this.proposalService.createProposalFromCodeBlock(code, mode);
-		return vscode.l10n.t('Created {0} proposal.', mode);
+		return vscode.l10n.t('\u5df2\u521b\u5efa {0} \u63d0\u8bae\u3002', mode);
 	}
 
 	private async writeFile(input: Record<string, unknown>): Promise<string> {
@@ -391,19 +391,19 @@ export class CursorToolService {
 		const content = asStringAllowEmpty(input.content, 'content');
 		await this.ensureParentDirectory(uri);
 		await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
-		return vscode.l10n.t('Wrote {0} characters to {1}.', content.length, getEditorLabel(uri));
+		return vscode.l10n.t('\u5df2\u5411 {1} \u5199\u5165 {0} \u4e2a\u5b57\u7b26\u3002', content.length, getEditorLabel(uri));
 	}
 
 	private async createFile(input: Record<string, unknown>): Promise<string> {
 		const uri = this.resolveWorkspacePath(input.path);
 		const content = asStringAllowEmpty(input.content, 'content');
 		if (await this.fileExists(uri)) {
-			throw new Error(vscode.l10n.t('{0} already exists.', getEditorLabel(uri)));
+			throw new Error(vscode.l10n.t('{0} \u5df2\u5b58\u5728\u3002', getEditorLabel(uri)));
 		}
 
 		await this.ensureParentDirectory(uri);
 		await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
-		return vscode.l10n.t('Created {0}.', getEditorLabel(uri));
+		return vscode.l10n.t('\u5df2\u521b\u5efa {0}\u3002', getEditorLabel(uri));
 	}
 
 	private async replaceInFile(input: Record<string, unknown>): Promise<string> {
@@ -415,20 +415,20 @@ export class CursorToolService {
 		const text = document.getText();
 
 		if (!text.includes(search)) {
-			throw new Error(vscode.l10n.t('Search text was not found in {0}.', getEditorLabel(uri)));
+			throw new Error(vscode.l10n.t('\u5728 {0} \u4e2d\u6ca1\u6709\u627e\u5230\u8981\u66ff\u6362\u7684\u6587\u672c\u3002', getEditorLabel(uri)));
 		}
 
 		const nextText = replaceAll ? text.split(search).join(replace) : text.replace(search, replace);
 		await vscode.workspace.fs.writeFile(uri, Buffer.from(nextText, 'utf8'));
 
 		const count = replaceAll ? Math.max(0, text.split(search).length - 1) : 1;
-		return vscode.l10n.t('Replaced {0} occurrence(s) in {1}.', count, getEditorLabel(uri));
+		return vscode.l10n.t('\u5df2\u5728 {1} \u4e2d\u66ff\u6362 {0} \u5904\u5339\u914d\u5185\u5bb9\u3002', count, getEditorLabel(uri));
 	}
 
 	private async runCommand(input: Record<string, unknown>): Promise<string> {
 		const commandLine = asString(input.command, 'command').trim();
 		if (!isSafeCommand(commandLine)) {
-			throw new Error(vscode.l10n.t('Command contains unsupported shell control characters. Use a single safe command only.'));
+			throw new Error(vscode.l10n.t('\u547d\u4ee4\u5305\u542b\u4e0d\u652f\u6301\u7684 shell \u63a7\u5236\u5b57\u7b26\u3002\u53ea\u80fd\u8fd0\u884c\u5355\u6761\u5b89\u5168\u547d\u4ee4\u3002'));
 		}
 
 		const cwdUri = this.resolveWorkspaceFolderCwd(asOptionalString(input.cwd));
@@ -438,7 +438,7 @@ export class CursorToolService {
 		const shellIntegration = await this.waitForShellIntegration(terminal);
 		if (!shellIntegration) {
 			terminal.sendText(commandLine, true);
-			return vscode.l10n.t('Sent command to terminal without shell integration: {0}', commandLine);
+			return vscode.l10n.t('\u5df2\u5c06\u547d\u4ee4\u53d1\u9001\u5230\u7ec8\u7aef\uff0c\u4f46\u5f53\u524d\u6ca1\u6709 shell integration\uff1a{0}', commandLine);
 		}
 
 		const execution = shellIntegration.executeCommand(commandLine);
@@ -450,7 +450,7 @@ export class CursorToolService {
 				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				this.log(vscode.l10n.t('Failed to read command output: {0}', message));
+				this.log(vscode.l10n.t('\u8bfb\u53d6\u547d\u4ee4\u8f93\u51fa\u5931\u8d25\uff1a{0}', message));
 			}
 		})();
 
@@ -473,9 +473,9 @@ export class CursorToolService {
 		await readTask;
 
 		const output = truncateText(stripAnsi(chunks.join('')).trim(), MAX_COMMAND_OUTPUT);
-		const header = cwdUri ? `cwd: ${getEditorLabel(cwdUri)}` : 'cwd: workspace root';
-		const codeLabel = exitCode === undefined ? 'exit: unknown' : `exit: ${exitCode}`;
-		return [header, codeLabel, `command: ${commandLine}`, output].filter(Boolean).join('\n');
+		const header = cwdUri ? `\u76ee\u5f55\uff1a${getEditorLabel(cwdUri)}` : '\u76ee\u5f55\uff1a\u5de5\u4f5c\u533a\u6839\u76ee\u5f55';
+		const codeLabel = exitCode === undefined ? '\u9000\u51fa\u7801\uff1a\u672a\u77e5' : `\u9000\u51fa\u7801\uff1a${exitCode}`;
+		return [header, codeLabel, `\u547d\u4ee4\uff1a${commandLine}`, output].filter(Boolean).join('\n');
 	}
 
 	private createRange(input: Record<string, unknown>): vscode.Range {
@@ -489,7 +489,7 @@ export class CursorToolService {
 		const pathValue = asString(pathInput, 'path');
 		const folder = vscode.workspace.workspaceFolders?.[0];
 		if (!folder) {
-			throw new Error(vscode.l10n.t('No workspace folder is open.'));
+			throw new Error(vscode.l10n.t('\u5f53\u524d\u6ca1\u6709\u6253\u5f00\u7684\u5de5\u4f5c\u533a\u6587\u4ef6\u5939\u3002'));
 		}
 
 		const normalized = pathValue === '.' ? '' : pathValue.replace(/^\/+/, '');
@@ -527,7 +527,7 @@ export class CursorToolService {
 		}
 
 		const terminal = vscode.window.createTerminal({
-			name: 'Cursor Agent',
+			name: 'Cursor \u667a\u80fd\u4f53',
 			cwd
 		});
 		this.managedTerminals.add(terminal);
@@ -607,21 +607,21 @@ function truncateText(value: string, maxLength: number): string {
 		return value;
 	}
 
-	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[truncated]`;
+	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[\u5df2\u622a\u65ad]`;
 }
 
 function formatSeverity(severity: vscode.DiagnosticSeverity): string {
 	switch (severity) {
 		case vscode.DiagnosticSeverity.Error:
-			return 'Error';
+			return '\u9519\u8bef';
 		case vscode.DiagnosticSeverity.Warning:
-			return 'Warning';
+			return '\u8b66\u544a';
 		case vscode.DiagnosticSeverity.Information:
-			return 'Information';
+			return '\u4fe1\u606f';
 		case vscode.DiagnosticSeverity.Hint:
-			return 'Hint';
+			return '\u63d0\u793a';
 		default:
-			return 'Unknown';
+			return '\u672a\u77e5';
 	}
 }
 

@@ -90,20 +90,20 @@ export class CursorContextService implements vscode.Disposable {
 		const activeEditor = getPreferredCodeEditor();
 		const selection = getEditorSelectionSnapshot(activeEditor);
 		if (activeEditor) {
-			summary.push(vscode.l10n.t('File: {0}', getEditorLabel(activeEditor.document.uri)));
+			summary.push(vscode.l10n.t('\u6587\u4ef6\uff1a{0}', getEditorLabel(activeEditor.document.uri)));
 		}
 
 		if (this.recentFiles.length) {
-			summary.push(vscode.l10n.t('Recent: {0}', this.recentFiles.length));
+			summary.push(vscode.l10n.t('\u6700\u8fd1\u6587\u4ef6\uff1a{0}', this.recentFiles.length));
 		}
 
 		const diagnostics = this.getDiagnosticTotals();
 		if (diagnostics.errors || diagnostics.warnings) {
-			summary.push(vscode.l10n.t('Problems: {0}E {1}W', diagnostics.errors, diagnostics.warnings));
+			summary.push(vscode.l10n.t('\u95ee\u9898\uff1a{0} \u9519\u8bef {1} \u8b66\u544a', diagnostics.errors, diagnostics.warnings));
 		}
 
 		if (this.failedTerminalCommands.length) {
-			summary.push(vscode.l10n.t('Terminal Failures: {0}', this.failedTerminalCommands.length));
+			summary.push(vscode.l10n.t('\u7ec8\u7aef\u5931\u8d25\uff1a{0}', this.failedTerminalCommands.length));
 		}
 
 		return {
@@ -182,7 +182,7 @@ export class CursorContextService implements vscode.Disposable {
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			this.log(vscode.l10n.t('Failed to read terminal execution output: {0}', message));
+			this.log(vscode.l10n.t('\u8bfb\u53d6\u7ec8\u7aef\u6267\u884c\u8f93\u51fa\u5931\u8d25\uff1a{0}', message));
 		}
 	}
 
@@ -210,7 +210,7 @@ export class CursorContextService implements vscode.Disposable {
 
 		this.failedTerminalCommands = [failure, ...this.failedTerminalCommands].slice(0, MAX_FAILED_COMMANDS);
 		void this.storage.update(FAILED_TERMINALS_KEY, this.failedTerminalCommands);
-		this.log(vscode.l10n.t('Captured failed terminal command: {0}', commandLine));
+		this.log(vscode.l10n.t('\u5df2\u8bb0\u5f55\u5931\u8d25\u7684\u7ec8\u7aef\u547d\u4ee4\uff1a{0}', commandLine));
 		this.fireState();
 	}
 
@@ -221,14 +221,14 @@ export class CursorContextService implements vscode.Disposable {
 		}
 
 		const lines: string[] = [
-			'Active editor:',
-			`- File: ${this.formatUri(editor.document.uri)}`,
-			`- Language: ${editor.document.languageId || 'plaintext'}`
+			'\u5f53\u524d\u7f16\u8f91\u5668\uff1a',
+			`- \u6587\u4ef6\uff1a${this.formatUri(editor.document.uri)}`,
+			`- \u8bed\u8a00\uff1a${editor.document.languageId || 'plaintext'}`
 		];
 
 		if (!editor.selection.isEmpty) {
 			const selectedText = truncateText(editor.document.getText(editor.selection), MAX_SELECTION_CONTEXT);
-			lines.push(`- Selection: lines ${editor.selection.start.line + 1}-${editor.selection.end.line + 1}`);
+			lines.push(`- \u9009\u533a\uff1a\u7b2c ${editor.selection.start.line + 1}-${editor.selection.end.line + 1} \u884c`);
 			lines.push('```');
 			lines.push(selectedText);
 			lines.push('```');
@@ -243,7 +243,7 @@ export class CursorContextService implements vscode.Disposable {
 			return undefined;
 		}
 
-		const lines = ['Workspace tree:'];
+		const lines = ['\u5de5\u4f5c\u533a\u7ed3\u6784\uff1a'];
 		const budget = { lines: 0 };
 
 		for (const folder of workspaceFolders.slice(0, 2)) {
@@ -303,7 +303,7 @@ export class CursorContextService implements vscode.Disposable {
 		}
 
 		return [
-			'Recent files:',
+			'\u6700\u8fd1\u6587\u4ef6\uff1a',
 			...this.recentFiles.map((file, index) => `${index + 1}. ${file}`)
 		].join('\n');
 	}
@@ -315,9 +315,9 @@ export class CursorContextService implements vscode.Disposable {
 		}
 
 		const activeUri = getPreferredCodeEditor()?.document.uri;
-		const lines = ['Diagnostics summary:'];
+		const lines = ['\u8bca\u65ad\u6458\u8981\uff1a'];
 		const totals = this.getDiagnosticTotals();
-		lines.push(`- Workspace totals: ${totals.errors} errors, ${totals.warnings} warnings`);
+		lines.push(`- \u5de5\u4f5c\u533a\u603b\u8ba1\uff1a${totals.errors} \u4e2a\u9519\u8bef\uff0c${totals.warnings} \u4e2a\u8b66\u544a`);
 
 		const flattened = diagnostics
 			.flatMap(([uri, values]) => values.map(diagnostic => ({ uri, diagnostic })))
@@ -345,10 +345,10 @@ export class CursorContextService implements vscode.Disposable {
 			return undefined;
 		}
 
-		const lines = ['Recent failed terminal commands:'];
+		const lines = ['\u6700\u8fd1\u5931\u8d25\u7684\u7ec8\u7aef\u547d\u4ee4\uff1a'];
 		for (const failure of this.failedTerminalCommands) {
-			const cwd = failure.cwd ? ` in ${failure.cwd}` : '';
-			const exitCode = failure.exitCode === undefined ? 'unknown exit code' : `exit ${failure.exitCode}`;
+			const cwd = failure.cwd ? `\uff0c\u76ee\u5f55 ${failure.cwd}` : '';
+			const exitCode = failure.exitCode === undefined ? '\u9000\u51fa\u7801\u672a\u77e5' : `\u9000\u51fa\u7801 ${failure.exitCode}`;
 			lines.push(`- ${failure.commandLine} (${exitCode})${cwd}`);
 			if (failure.output) {
 				lines.push('```');
@@ -435,21 +435,21 @@ function truncateText(value: string, maxLength: number): string {
 		return value;
 	}
 
-	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[truncated]`;
+	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[\u5df2\u622a\u65ad]`;
 }
 
 function formatSeverity(severity: vscode.DiagnosticSeverity): string {
 	switch (severity) {
 		case vscode.DiagnosticSeverity.Error:
-			return 'Error';
+			return '\u9519\u8bef';
 		case vscode.DiagnosticSeverity.Warning:
-			return 'Warning';
+			return '\u8b66\u544a';
 		case vscode.DiagnosticSeverity.Information:
-			return 'Information';
+			return '\u4fe1\u606f';
 		case vscode.DiagnosticSeverity.Hint:
-			return 'Hint';
+			return '\u63d0\u793a';
 		default:
-			return 'Unknown';
+			return '\u672a\u77e5';
 	}
 }
 
