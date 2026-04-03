@@ -8,7 +8,6 @@ import { BeamService } from "./beamService";
 import { BeamComposerService } from "./composerService";
 import { BeamContextService } from "./contextService";
 import {
-	getEditorSelectionSnapshot,
 	getPreferredCodeEditor,
 	revealEditorRange,
 	selectCurrentBlock,
@@ -43,6 +42,7 @@ const ASK_ABOUT_SELECTION_COMMAND = "beam.askAboutSelection";
 const ADD_SELECTION_TO_CHAT_COMMAND = "beam.addSelectionToChat";
 const EDIT_SELECTION_COMMAND = "beam.editSelection";
 const EXPLAIN_SELECTION_COMMAND = "beam.explainSelection";
+const SELECTION_ACTIONS_COMMAND = "beam.selectionActions";
 const FIX_CURRENT_FILE_COMMAND = "beam.fixCurrentFile";
 const OPEN_SESSION_COMMAND = "beam.openSession";
 const ADD_SELECTION_TO_CHAT_STATUS_COMMAND =
@@ -73,7 +73,6 @@ export function activate(context: vscode.ExtensionContext): void {
 		contextService,
 		proposalService,
 	);
-	const selectionInlayHintsProvider = new BeamSelectionInlayHintsProvider();
 	const pendingChangesTreeProvider = new PendingChangesTreeProvider();
 
 	context.subscriptions.push(outputChannel);
@@ -82,7 +81,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(contextService);
 	context.subscriptions.push(proposalService);
 	context.subscriptions.push(provider);
-	context.subscriptions.push(selectionInlayHintsProvider);
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_ID, provider, {
 			webviewOptions: { retainContextWhenHidden: true },
@@ -138,18 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand("beam.sendSelection", async () => {
-			const attachment = composerService.addSelectionAttachment();
-			if (!attachment) {
-				void vscode.window.showInformationMessage(
-					vscode.l10n.t(
-						"\u8bf7\u5148\u9009\u4e2d\u4e00\u4e9b\u4ee3\u7801\u3002",
-					),
-				);
-				return;
-			}
-
-			await revealSidebar(provider, true);
-			provider.insertAttachmentReference(attachment);
+			await handleSelectionAction(composerService, provider);
 		}),
 	);
 
@@ -166,7 +153,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 
 			await revealSidebar(provider, true);
-			provider.insertAttachmentReference(attachment);
+			provider.showAttachmentAdded(attachment);
 		}),
 	);
 
@@ -183,7 +170,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 
 			await revealSidebar(provider, true);
-			provider.insertAttachmentReference(attachment);
+			provider.showAttachmentAdded(attachment);
 		}),
 	);
 
@@ -354,42 +341,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand(ASK_ABOUT_SELECTION_COMMAND, async () => {
-			const editor = getPreferredCodeEditor();
-			const selection = getEditorSelectionSnapshot(editor, 1200);
-			if (!editor || !selection) {
-				void vscode.window.showInformationMessage(
-					vscode.l10n.t(
-						"\u8bf7\u5148\u9009\u4e2d\u4e00\u4e9b\u4ee3\u7801\u3002",
-					),
-				);
-				return;
-			}
-
-			const prompt = [
-				vscode.l10n.t(
-					"\u8bf7\u5206\u6790\u8fd9\u6bb5\u9009\u4e2d\u5185\u5bb9\uff0c\u5e76\u5728\u9700\u8981\u65f6\u5148\u8c03\u7528\u5de5\u5177\u518d\u56de\u7b54\u3002",
-				),
-			].join("\n");
-
-			const attachment = composerService.addSelectionAttachment();
-			await revealSidebar(provider, true);
-			if (attachment) {
-				provider.insertAttachmentReference(attachment);
-			}
-			provider.seedPrompt(prompt);
+			await handleSelectionAction(
+				composerService,
+				provider,
+				vscode.l10n.t("继续基于这段选区帮我分析。"),
+			);
 		}),
 	);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand(ADD_SELECTION_TO_CHAT_COMMAND, async () => {
-			const attachment = composerService.addSelectionAttachment();
-			if (!attachment) {
-				return;
-			}
-
-			await revealSidebar(provider, true);
-			provider.insertAttachmentReference(attachment);
-			provider.focusComposer();
+			await handleSelectionAction(composerService, provider);
 		}),
 	);
 
@@ -404,25 +366,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand(EDIT_SELECTION_COMMAND, async () => {
-			const editor = getPreferredCodeEditor();
-			const selection = getEditorSelectionSnapshot(editor, 1200);
-			if (!editor || !selection) {
-				void vscode.window.showInformationMessage(
-					vscode.l10n.t(
-						"\u8bf7\u5148\u9009\u4e2d\u4e00\u4e9b\u4ee3\u7801\u3002",
-					),
-				);
-				return;
-			}
-
-			const attachment = composerService.addSelectionAttachment();
-			await revealSidebar(provider, true);
-			if (attachment) {
-				provider.insertAttachmentReference(attachment);
-			}
-			provider.seedPrompt(
+			await handleSelectionAction(
+				composerService,
+				provider,
 				vscode.l10n.t(
-					"\u8bf7\u4fee\u6539\u8fd9\u6bb5\u9009\u4e2d\u5185\u5bb9\u3002\u9700\u8981\u65f6\u5148\u8c03\u7528\u5de5\u5177\uff1b\u5982\u679c\u8981\u7ed9\u51fa\u5177\u4f53\u6539\u52a8\uff0c\u8bf7\u521b\u5efa\u7f16\u8f91\u63d0\u8bae\uff0c\u800c\u4e0d\u662f\u53ea\u7c98\u8d34\u4ee3\u7801\u3002",
+					"帮我修改这段选区；如果需要给出具体改动，请直接创建可应用的编辑提议。",
 				),
 			);
 		}),
@@ -430,27 +378,48 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand(EXPLAIN_SELECTION_COMMAND, async () => {
-			const editor = getPreferredCodeEditor();
-			const selection = getEditorSelectionSnapshot(editor, 1200);
-			if (!editor || !selection) {
-				void vscode.window.showInformationMessage(
-					vscode.l10n.t(
-						"\u8bf7\u5148\u9009\u4e2d\u4e00\u4e9b\u4ee3\u7801\u3002",
-					),
-				);
+			await handleSelectionAction(
+				composerService,
+				provider,
+				vscode.l10n.t("帮我解释这段选区在做什么。"),
+			);
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand(SELECTION_ACTIONS_COMMAND, async () => {
+			const choice = await vscode.window.showQuickPick(
+				[
+					{
+						label: vscode.l10n.t('Ask about selection'),
+						description: vscode.l10n.t('分析当前选区'),
+						command: ASK_ABOUT_SELECTION_COMMAND,
+					},
+					{
+						label: vscode.l10n.t('Edit selection'),
+						description: vscode.l10n.t('修改当前选区'),
+						command: EDIT_SELECTION_COMMAND,
+					},
+					{
+						label: vscode.l10n.t('Explain selection'),
+						description: vscode.l10n.t('解释当前选区'),
+						command: EXPLAIN_SELECTION_COMMAND,
+					},
+					{
+						label: vscode.l10n.t('Attach selection to chat'),
+						description: vscode.l10n.t('仅附加到对话上下文'),
+						command: ADD_SELECTION_TO_CHAT_COMMAND,
+					},
+				],
+				{
+					placeHolder: vscode.l10n.t('Choose what to do with the current selection'),
+				},
+			);
+			if (!choice) {
 				return;
 			}
 
-			const attachment = composerService.addSelectionAttachment();
-			await revealSidebar(provider, true);
-			if (attachment) {
-				provider.insertAttachmentReference(attachment);
-			}
-			provider.seedPrompt(
-				vscode.l10n.t(
-					"\u8bf7\u7b80\u8981\u89e3\u91ca\u8fd9\u6bb5\u9009\u4e2d\u5185\u5bb9\u3002\u53ea\u6709\u5728\u9700\u8981\u7406\u89e3\u5468\u8fb9\u4e0a\u4e0b\u6587\u65f6\u624d\u8c03\u7528\u5de5\u5177\u3002",
-				),
-			);
+			await vscode.commands.executeCommand(choice.command);
 		}),
 	);
 
@@ -468,9 +437,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
 			const problemsAttachment = composerService.addProblemsAttachment();
 			await revealSidebar(provider, true);
-			provider.insertAttachmentReference(fileAttachment);
+			provider.showAttachmentAdded(fileAttachment);
 			if (problemsAttachment) {
-				provider.insertAttachmentReference(problemsAttachment);
+				provider.showAttachmentAdded(problemsAttachment);
 			}
 			provider.seedPrompt(
 				vscode.l10n.t(
@@ -486,16 +455,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			new BeamProposalCodeLensProvider(proposalService),
 		),
 	);
-
 	context.subscriptions.push(
-		vscode.languages.registerInlayHintsProvider(
+		vscode.languages.registerCodeLensProvider(
 			[{ scheme: "file" }, { scheme: "untitled" }],
-			selectionInlayHintsProvider,
+			new BeamSelectionCodeLensProvider(proposalService),
 		),
 	);
-
-	const selectionEntry = new BeamSelectionEntryController();
-	context.subscriptions.push(selectionEntry);
 }
 
 async function applyCodeToActiveEditor(
@@ -551,6 +516,27 @@ async function revealSidebar(
 	}
 }
 
+async function handleSelectionAction(
+	composerService: BeamComposerService,
+	provider: BeamSidebarProvider,
+	promptText?: string,
+): Promise<boolean> {
+	const attachment = composerService.addSelectionAttachment();
+	if (!attachment) {
+		void vscode.window.showInformationMessage(
+			vscode.l10n.t("\u8bf7\u5148\u9009\u4e2d\u4e00\u4e9b\u4ee3\u7801\u3002"),
+		);
+		return false;
+	}
+
+	await revealSidebar(provider, true);
+	provider.showAttachmentAdded(attachment);
+	if (promptText) {
+		provider.seedPrompt(promptText);
+	}
+	return true;
+}
+
 class BeamProposalCodeLensProvider implements vscode.CodeLensProvider {
 	constructor(private readonly proposalService: BeamProposalService) {}
 
@@ -568,170 +554,76 @@ class BeamProposalCodeLensProvider implements vscode.CodeLensProvider {
 
 		return [
 			new vscode.CodeLens(range, {
-				title: `$(check) ${vscode.l10n.t("\u63a5\u53d7")}`,
+				title: `$(check) ${vscode.l10n.t("接受")}`,
 				command: ACCEPT_PROPOSAL_COMMAND,
 				tooltip: vscode.l10n.t(
-					"\u63a5\u53d7 Beam \u7684\u7f16\u8f91\u63d0\u8bae",
+					"接受 Beam 的编辑提议",
 				),
 			}),
 			new vscode.CodeLens(range, {
-				title: `$(close) ${vscode.l10n.t("\u62d2\u7edd")}`,
+				title: `$(close) ${vscode.l10n.t("拒绝")}`,
 				command: REJECT_PROPOSAL_COMMAND,
 				tooltip: vscode.l10n.t(
-					"\u62d2\u7edd Beam \u7684\u7f16\u8f91\u63d0\u8bae",
+					"拒绝 Beam 的编辑提议",
 				),
 			}),
 			new vscode.CodeLens(range, {
-				title: `$(diff) ${vscode.l10n.t("\u6253\u5f00\u5bf9\u6bd4\u89c6\u56fe")}`,
+				title: `$(diff) ${vscode.l10n.t("打开对比视图")}`,
 				command: OPEN_PROPOSAL_DIFF_COMMAND,
 				tooltip: vscode.l10n.t(
-					"\u5728\u5bf9\u6bd4\u89c6\u56fe\u4e2d\u67e5\u770b\u5b8c\u6574\u5dee\u5f02",
+					"在对比视图中查看完整差异",
 				),
 			}),
 		];
 	}
 }
 
-class BeamSelectionInlayHintsProvider
-	extends vscode.Disposable
-	implements vscode.InlayHintsProvider
+class BeamSelectionCodeLensProvider
+	implements vscode.CodeLensProvider, vscode.Disposable
 {
-	private readonly _onDidChangeInlayHints = new vscode.EventEmitter<void>();
-	readonly onDidChangeInlayHints = this._onDidChangeInlayHints.event;
+	private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
+	readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 	private readonly localDisposables: vscode.Disposable[] = [];
 
-	constructor() {
-		super(() => {
-			vscode.Disposable.from(...this.localDisposables).dispose();
-			this._onDidChangeInlayHints.dispose();
-		});
-
+	constructor(private readonly proposalService: BeamProposalService) {
 		this.localDisposables.push(
 			vscode.window.onDidChangeTextEditorSelection(() =>
-				this._onDidChangeInlayHints.fire(),
+				this._onDidChangeCodeLenses.fire(),
 			),
 		);
 		this.localDisposables.push(
 			vscode.window.onDidChangeActiveTextEditor(() =>
-				this._onDidChangeInlayHints.fire(),
+				this._onDidChangeCodeLenses.fire(),
 			),
 		);
 	}
 
-	provideInlayHints(document: vscode.TextDocument): vscode.InlayHint[] {
+	dispose(): void {
+		vscode.Disposable.from(...this.localDisposables).dispose();
+		this._onDidChangeCodeLenses.dispose();
+	}
+
+	provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
 		const editor = getPreferredCodeEditor();
+		const proposal = this.proposalService.getActiveProposal();
 		if (
 			!editor ||
 			editor.document.uri.toString() !== document.uri.toString() ||
-			editor.selection.isEmpty
+			editor.selections.length !== 1 ||
+			editor.selection.isEmpty ||
+			(proposal && proposal.originalUri.toString() === document.uri.toString())
 		) {
 			return [];
 		}
 
-		const hint = new vscode.InlayHint(
-			editor.selection.end,
-			[
-				{
-					value: vscode.l10n.t("\u52a0\u5165\u8f93\u5165\u6846"),
-					tooltip: vscode.l10n.t(
-						"\u5c06\u9009\u533a\u52a0\u5165 Beam \u8f93\u5165\u6846",
-					),
-					command: {
-						title: vscode.l10n.t("\u52a0\u5165\u8f93\u5165\u6846"),
-						command: ADD_SELECTION_TO_CHAT_COMMAND,
-					},
-				},
-			],
-			vscode.InlayHintKind.Type,
-		);
-		hint.paddingLeft = true;
-		hint.paddingRight = true;
-		return [hint];
-	}
-}
-
-class BeamSelectionEntryController extends vscode.Disposable {
-	private readonly statusBarItem: vscode.StatusBarItem;
-	private readonly selectionDecorationType: vscode.TextEditorDecorationType;
-	private currentEditorUri: string | undefined;
-	private readonly localDisposables: vscode.Disposable[] = [];
-
-	constructor() {
-		const statusBarItem = vscode.window.createStatusBarItem(
-			vscode.StatusBarAlignment.Right,
-			40,
-		);
-		const selectionDecorationType =
-			vscode.window.createTextEditorDecorationType({
-				after: {
-					contentText: `  ${vscode.l10n.t("\u52a0\u5165\u5bf9\u8bdd")}`,
-					color: new vscode.ThemeColor("textLink.foreground"),
-					backgroundColor: new vscode.ThemeColor(
-						"editorHoverWidget.background",
-					),
-					margin: "0 0 0 10px",
-				},
-				rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-			});
-		super(() => {
-			statusBarItem.dispose();
-			selectionDecorationType.dispose();
-			vscode.Disposable.from(...this.localDisposables).dispose();
-		});
-
-		this.statusBarItem = statusBarItem;
-		this.selectionDecorationType = selectionDecorationType;
-		this.statusBarItem.name = vscode.l10n.t("Beam \u9009\u533a\u5165\u53e3");
-		this.statusBarItem.command = ADD_SELECTION_TO_CHAT_STATUS_COMMAND;
-		this.statusBarItem.tooltip = vscode.l10n.t(
-			"\u5c06\u5f53\u524d\u9009\u533a\u52a0\u5165 Beam \u5bf9\u8bdd\u8f93\u5165\u6846",
-		);
-		this.statusBarItem.text = `$(sparkle) ${vscode.l10n.t("\u52a0\u5165\u5bf9\u8bdd")}`;
-
-		this.localDisposables.push(
-			vscode.window.onDidChangeTextEditorSelection(() => this.update()),
-		);
-		this.localDisposables.push(
-			vscode.window.onDidChangeActiveTextEditor(() => this.update()),
-		);
-		this.update();
-	}
-
-	private update(): void {
-		const editor = getPreferredCodeEditor();
-		if (
-			this.currentEditorUri &&
-			(!editor || editor.document.uri.toString() !== this.currentEditorUri)
-		) {
-			for (const visibleEditor of vscode.window.visibleTextEditors) {
-				if (visibleEditor.document.uri.toString() === this.currentEditorUri) {
-					visibleEditor.setDecorations(this.selectionDecorationType, []);
-				}
-			}
-			this.currentEditorUri = undefined;
-		}
-
-		if (!editor || editor.selection.isEmpty) {
-			this.statusBarItem.hide();
-			editor?.setDecorations(this.selectionDecorationType, []);
-			return;
-		}
-
-		const selectedLineCount =
-			editor.selection.end.line - editor.selection.start.line + 1;
-		this.statusBarItem.text = `$(sparkle) ${vscode.l10n.t("\u52a0\u5165\u5bf9\u8bdd")} (${selectedLineCount}L)`;
-		this.statusBarItem.show();
-		this.currentEditorUri = editor.document.uri.toString();
-		const anchor = editor.selection.end;
-		editor.setDecorations(this.selectionDecorationType, [
-			{
-				range: new vscode.Range(anchor, anchor),
-				hoverMessage: new vscode.MarkdownString(
-					vscode.l10n.t(
-						"\u70b9\u51fb inlay hint \u6216\u72b6\u6001\u680f\u6309\u94ae\uff0c\u5c06\u9009\u533a\u4e00\u952e\u52a0\u5165\u5bf9\u8bdd\u3002",
-					),
-				),
-			},
-		]);
+		const line = editor.selection.end.line;
+		const range = new vscode.Range(line, 0, line, 0);
+		return [
+			new vscode.CodeLens(range, {
+				title: `$(sparkle) ${vscode.l10n.t("Ask Beam")}`,
+				command: ASK_ABOUT_SELECTION_COMMAND,
+				tooltip: vscode.l10n.t("带着这段选区直接向 Beam 提问"),
+			}),
+		];
 	}
 }

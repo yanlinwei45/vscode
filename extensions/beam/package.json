@@ -260,10 +260,16 @@
           "command": "beam.askAboutSelection"
         },
         {
+          "command": "beam.addSelectionToChat"
+        },
+        {
           "command": "beam.editSelection"
         },
         {
           "command": "beam.explainSelection"
+        },
+        {
+          "command": "beam.selectionActions"
         },
         {
           "command": "beam.fixCurrentFile"

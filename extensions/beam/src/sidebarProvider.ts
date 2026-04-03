@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { BeamService } from './beamService';
-import { BeamComposerService, formatAttachmentReference, type IBeamComposerAttachmentState } from './composerService';
+import { BeamComposerService, type IBeamComposerAttachmentState } from './composerService';
 import { BeamContextService } from './contextService';
 import { BeamProposalService } from './proposalService';
 
@@ -13,7 +13,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 	private view: vscode.WebviewView | undefined;
 	private pendingPrompt: string | undefined;
-	private pendingPromptInsertions: string[] = [];
+	private pendingStatusMessage: string | undefined;
 	private shouldFocusComposer = false;
 	private readonly localDisposables: vscode.Disposable[] = [];
 
@@ -57,12 +57,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				);
 				await this.service.sendUserMessage(message.prompt, requestContext);
 				this.composerService.clear();
-
-				// Clear editor selection after sending
-				const editor = vscode.window.activeTextEditor;
-				if (editor && !editor.selection.isEmpty) {
-					editor.selection = new vscode.Selection(editor.selection.active, editor.selection.active);
-				}
 				return;
 			}
 
@@ -89,7 +83,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			if (message.type === 'resetComposer') {
 				this.pendingPrompt = undefined;
-				this.pendingPromptInsertions = [];
+				this.pendingStatusMessage = undefined;
 				this.shouldFocusComposer = false;
 				void this.view?.webview.postMessage({ type: 'resetComposer' });
 				return;
@@ -97,16 +91,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			if (message.type === 'ready') {
 				this.postState();
-				if (this.pendingPromptInsertions.length) {
-					for (const insertion of this.pendingPromptInsertions) {
-						void this.view?.webview.postMessage({ type: 'appendPrompt', value: insertion });
-					}
-					this.pendingPromptInsertions = [];
-				}
 				if (this.pendingPrompt !== undefined) {
 					this.view?.show?.(true);
 					void this.view?.webview.postMessage({ type: 'seedPrompt', value: this.pendingPrompt });
 					this.pendingPrompt = undefined;
+				}
+				if (this.pendingStatusMessage !== undefined) {
+					void this.view?.webview.postMessage({ type: 'showComposerStatus', value: this.pendingStatusMessage });
+					this.pendingStatusMessage = undefined;
 				}
 				if (this.shouldFocusComposer) {
 					void this.view?.webview.postMessage({ type: 'focusComposer' });
@@ -130,15 +122,15 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		this.pendingPrompt = prompt;
 	}
 
-	insertAttachmentReference(attachment: IBeamComposerAttachmentState): void {
-		const reference = formatAttachmentReference(attachment);
+	showAttachmentAdded(_attachment: IBeamComposerAttachmentState): void {
+		const message = vscode.l10n.t('已附加当前选区，继续提问即可');
 		if (this.view) {
-			void this.view.webview.postMessage({ type: 'appendPrompt', value: reference });
+			void this.view.webview.postMessage({ type: 'showComposerStatus', value: message });
 			this.view.show?.(true);
 			return;
 		}
 
-		this.pendingPromptInsertions.push(reference);
+		this.pendingStatusMessage = message;
 	}
 
 	focusComposer(): void {
@@ -1185,6 +1177,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			if (message.type === 'appendPrompt' && typeof message.value === 'string') {
 				appendPromptValue(message.value);
+				return;
+			}
+
+			if (message.type === 'showComposerStatus' && typeof message.value === 'string') {
+				showComposerStatus(message.value);
 				return;
 			}
 

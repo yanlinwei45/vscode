@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 
 const MAX_SELECTION_PREVIEW = 320;
+const DEFAULT_SELECTION_CONTEXT_LINE_COUNT = 2;
 
 export interface IEditorSelectionSnapshot {
 	readonly fileLabel: string;
@@ -13,7 +14,11 @@ export interface IEditorSelectionSnapshot {
 	readonly startLine: number;
 	readonly endLine: number;
 	readonly characterCount: number;
+	readonly selectedText: string;
 	readonly preview: string;
+	readonly rangeLabel: string;
+	readonly contextBefore: string;
+	readonly contextAfter: string;
 }
 
 export function getPreferredCodeEditor(): vscode.TextEditor | undefined {
@@ -38,19 +43,40 @@ function isUsableCodeEditor(editor: vscode.TextEditor | undefined): editor is vs
 	return document.uri.scheme === 'file' || document.uri.scheme === 'untitled';
 }
 
-export function getEditorSelectionSnapshot(editor: vscode.TextEditor | undefined, maxPreviewLength: number = MAX_SELECTION_PREVIEW): IEditorSelectionSnapshot | undefined {
+export function getEditorSelectionSnapshot(
+	editor: vscode.TextEditor | undefined,
+	maxPreviewLength: number = MAX_SELECTION_PREVIEW,
+	contextLineCount: number = DEFAULT_SELECTION_CONTEXT_LINE_COUNT
+): IEditorSelectionSnapshot | undefined {
 	if (!editor || editor.selection.isEmpty) {
 		return undefined;
 	}
 
-	const text = editor.document.getText(editor.selection);
+	const document = editor.document;
+	const range = new vscode.Range(editor.selection.start, editor.selection.end);
+	const text = document.getText(range);
+	const contextBeforeStartLine = Math.max(0, range.start.line - contextLineCount);
+	const contextAfterEndLine = Math.min(document.lineCount - 1, range.end.line + contextLineCount);
+	const contextBeforeRange = new vscode.Range(
+		new vscode.Position(contextBeforeStartLine, 0),
+		range.start
+	);
+	const contextAfterRange = new vscode.Range(
+		range.end,
+		document.lineAt(contextAfterEndLine).range.end
+	);
+
 	return {
-		fileLabel: getEditorLabel(editor.document.uri),
-		language: editor.document.languageId || 'plaintext',
-		startLine: editor.selection.start.line + 1,
-		endLine: editor.selection.end.line + 1,
+		fileLabel: getEditorLabel(document.uri),
+		language: document.languageId || 'plaintext',
+		startLine: range.start.line + 1,
+		endLine: range.end.line + 1,
 		characterCount: text.length,
-		preview: truncateText(text.trim(), maxPreviewLength)
+		selectedText: text,
+		preview: truncateText(text.trim(), maxPreviewLength),
+		rangeLabel: formatRangeLabel(range),
+		contextBefore: document.getText(contextBeforeRange).trimEnd(),
+		contextAfter: document.getText(contextAfterRange).trimStart()
 	};
 }
 

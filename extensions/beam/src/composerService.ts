@@ -11,6 +11,7 @@ const MAX_FILE_PREVIEW = 260;
 const MAX_PROBLEM_PREVIEW = 240;
 const MAX_ATTACHMENT_CONTEXT_CHARS = 7000;
 const MAX_TOTAL_ATTACHMENT_CONTEXT_CHARS = 12000;
+const SELECTION_CONTEXT_PREVIEW_LINE_COUNT = 2;
 
 type BeamComposerAttachmentKind = 'selection' | 'file' | 'problems';
 
@@ -108,28 +109,51 @@ export class BeamComposerService extends vscode.Disposable {
 
 	addSelectionAttachment(): IBeamComposerAttachmentState | undefined {
 		const editor = getPreferredCodeEditor();
-		const snapshot = getEditorSelectionSnapshot(editor, MAX_ATTACHMENT_PREVIEW);
+		const snapshot = getEditorSelectionSnapshot(
+			editor,
+			MAX_ATTACHMENT_PREVIEW,
+			SELECTION_CONTEXT_PREVIEW_LINE_COUNT
+		);
 		if (!editor || !snapshot) {
 			return undefined;
 		}
 
-		const content = [
-			`\u5df2\u9644\u52a0\u9009\u533a\uff1a${snapshot.fileLabel}`,
-			`\u8bed\u8a00\uff1a${snapshot.language}`,
-			`\u884c\u53f7\uff1a${snapshot.startLine}-${snapshot.endLine}`,
-			'',
-			'```' + snapshot.language,
-			editor.document.getText(editor.selection),
-			'```'
-		].join('\n');
+		const contentBlocks = [
+			`已附加选区：${snapshot.fileLabel}`,
+			`语言：${snapshot.language}`,
+			`范围：${snapshot.rangeLabel}`,
+			`行号：${snapshot.startLine}-${snapshot.endLine}`,
+			''
+		];
+
+		if (snapshot.contextBefore) {
+			contentBlocks.push('选区前文：');
+			contentBlocks.push('```' + snapshot.language);
+			contentBlocks.push(snapshot.contextBefore);
+			contentBlocks.push('```');
+			contentBlocks.push('');
+		}
+
+		contentBlocks.push('选区内容：');
+		contentBlocks.push('```' + snapshot.language);
+		contentBlocks.push(snapshot.selectedText);
+		contentBlocks.push('```');
+
+		if (snapshot.contextAfter) {
+			contentBlocks.push('');
+			contentBlocks.push('选区后文：');
+			contentBlocks.push('```' + snapshot.language);
+			contentBlocks.push(snapshot.contextAfter);
+			contentBlocks.push('```');
+		}
 
 		return this.upsertAttachment({
 			id: `selection:${editor.document.uri.toString()}:${editor.selection.start.line}:${editor.selection.start.character}:${editor.selection.end.line}:${editor.selection.end.character}`,
 			kind: 'selection',
 			label: snapshot.fileLabel,
-			detail: vscode.l10n.t('\u9009\u533a \u00b7 \u7b2c {0}-{1} \u884c', snapshot.startLine, snapshot.endLine),
-			preview: snapshot.preview || vscode.l10n.t('\u7a7a\u9009\u533a'),
-			content
+			detail: vscode.l10n.t('选区 · {0}', snapshot.rangeLabel),
+			preview: snapshot.preview || vscode.l10n.t('空选区'),
+			content: contentBlocks.join('\n')
 		});
 	}
 
