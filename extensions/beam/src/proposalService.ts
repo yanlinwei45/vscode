@@ -5,17 +5,24 @@
 
 import * as vscode from 'vscode';
 import { getPreferredCodeEditor } from './editorContext';
+import { InlineDiffDecorator } from './inlineDiffDecorator';
 
-const PROPOSAL_SCHEME = 'cursor-agent-proposal';
+const PROPOSAL_SCHEME = 'beam-proposal';
 
-export interface ICursorProposalState {
+export interface IBeamProposalState {
 	readonly active: boolean;
 	readonly targetLabel?: string;
 	readonly mode?: 'replace' | 'insert';
 	readonly reopenable?: boolean;
 }
 
-interface ICursorProposal {
+export interface IPendingProposalChange {
+	readonly uri: vscode.Uri;
+	readonly label: string;
+	readonly status: 'pending';
+}
+
+interface IBeamProposal {
 	readonly id: string;
 	readonly originalUri: vscode.Uri;
 	readonly targetLabel: string;
@@ -23,30 +30,34 @@ interface ICursorProposal {
 	readonly proposedText: string;
 	readonly mode: 'replace' | 'insert';
 	readonly selection?: vscode.Range;
+	readonly firstChangeLine?: number;
 }
 
-export class CursorProposalService implements vscode.TextDocumentContentProvider, vscode.Disposable {
+export class BeamProposalService implements vscode.TextDocumentContentProvider, vscode.Disposable {
 
 	private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
-	private readonly _onDidChangeState = new vscode.EventEmitter<ICursorProposalState>();
+	private readonly _onDidChangeState = new vscode.EventEmitter<IBeamProposalState>();
 	readonly onDidChange = this._onDidChange.event;
 	readonly onDidChangeState = this._onDidChangeState.event;
 
-	private readonly proposals = new Map<string, ICursorProposal>();
+	private readonly proposals = new Map<string, IBeamProposal>();
 	private activeProposalId: string | undefined;
 	private readonly providerRegistration: vscode.Disposable;
+	private readonly inlineDiffDecorator: InlineDiffDecorator;
 
 	constructor(private readonly outputChannel: vscode.OutputChannel) {
 		this.providerRegistration = vscode.workspace.registerTextDocumentContentProvider(PROPOSAL_SCHEME, this);
+		this.inlineDiffDecorator = new InlineDiffDecorator();
 	}
 
 	dispose(): void {
 		this._onDidChange.dispose();
 		this._onDidChangeState.dispose();
 		this.providerRegistration.dispose();
+		this.inlineDiffDecorator.dispose();
 	}
 
-	getState(): ICursorProposalState {
+	getState(): IBeamProposalState {
 		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
 		return {
 			active: Boolean(proposal),
@@ -54,6 +65,37 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 			mode: proposal?.mode,
 			reopenable: Boolean(proposal)
 		};
+	}
+
+	getActiveProposal(): { originalUri: vscode.Uri; firstChangeLine: number } | undefined {
+		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+		if (!proposal) {
+			return undefined;
+		}
+
+		return {
+			originalUri: proposal.originalUri,
+			firstChangeLine: proposal.firstChangeLine ?? 0
+		};
+	}
+
+	getPendingChanges(): readonly IPendingProposalChange[] {
+		return Array.from(this.proposals.values()).map(proposal => ({
+			uri: proposal.originalUri,
+			label: proposal.targetLabel,
+			status: 'pending' as const
+		}));
+	}
+
+	async openPendingChange(uri: vscode.Uri): Promise<void> {
+		const proposal = Array.from(this.proposals.values()).find(p => p.originalUri.toString() === uri.toString());
+		if (!proposal) {
+			return;
+		}
+
+		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
+		const editor = await vscode.window.showTextDocument(document, { preview: false });
+		this.inlineDiffDecorator.showInlineDiff(editor, proposal.originalText, proposal.proposedText);
 	}
 
 	reset(): void {
@@ -69,7 +111,7 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 	async createProposalFromCodeBlock(code: string, mode: 'replace' | 'insert'): Promise<void> {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('\u8bf7\u5148\u6253\u5f00\u4e00\u4e2a\u6587\u672c\u7f16\u8f91\u5668\uff0c\u518d\u521b\u5efa Cursor \u667a\u80fd\u4f53\u7684\u7f16\u8f91\u63d0\u8bae\u3002'));
+			void vscode.window.showInformationMessage(vscode.l10n.t('\u8bf7\u5148\u6253\u5f00\u4e00\u4e2a\u6587\u672c\u7f16\u8f91\u5668\uff0c\u518d\u521b\u5efa Beam \u7684\u7f16\u8f91\u63d0\u8bae\u3002'));
 			return;
 		}
 
@@ -82,6 +124,7 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 		const originalUri = editor.document.uri;
 		const originalText = editor.document.getText();
 		const proposedText = applyProposalText(editor, code, mode);
+		const diffRange = this.inlineDiffDecorator.showInlineDiff(editor, originalText, proposedText);
 		const proposalId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 		const targetLabel = vscode.workspace.asRelativePath(originalUri, false) || originalUri.fsPath || originalUri.toString();
 
@@ -92,21 +135,15 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 			originalText,
 			proposedText,
 			mode,
-			selection
+			selection,
+			firstChangeLine: diffRange.firstChangeLine
 		});
 		this.activeProposalId = proposalId;
 		this.fireState();
 
 		const proposalUri = this.getProposalUri(proposalId, originalUri);
 		this._onDidChange.fire(proposalUri);
-		await vscode.commands.executeCommand(
-			'vscode.diff',
-			originalUri,
-			proposalUri,
-			vscode.l10n.t('Cursor \u63d0\u8bae\uff1a{0}', targetLabel),
-			{ preview: true }
-		);
-		this.log(vscode.l10n.t('\u5df2\u6253\u5f00 {0} \u7684\u63d0\u8bae\u5bf9\u6bd4\u89c6\u56fe\u3002', targetLabel));
+		this.log(vscode.l10n.t('\u5df2\u5728\u7f16\u8f91\u5668\u4e2d\u663e\u793a {0} \u7684\u63d0\u8bae\u9884\u89c8\u3002', targetLabel));
 	}
 
 	async acceptActiveProposal(): Promise<void> {
@@ -117,6 +154,7 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 
 		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
 		const editor = await vscode.window.showTextDocument(document, { preview: false });
+		this.inlineDiffDecorator.clearDecorations(editor);
 		const fullRange = fullDocumentRange(document);
 		await editor.edit(editBuilder => {
 			editBuilder.replace(fullRange, proposal.proposedText);
@@ -130,6 +168,11 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
 		if (!proposal) {
 			return;
+		}
+
+		const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === proposal.originalUri.toString());
+		if (activeEditor) {
+			this.inlineDiffDecorator.clearDecorations(activeEditor);
 		}
 
 		this.log(vscode.l10n.t('\u5df2\u62d2\u7edd {0} \u7684\u7f16\u8f91\u63d0\u8bae\u3002', proposal.targetLabel));
@@ -148,8 +191,8 @@ export class CursorProposalService implements vscode.TextDocumentContentProvider
 			'vscode.diff',
 			proposal.originalUri,
 			proposalUri,
-			vscode.l10n.t('Cursor \u63d0\u8bae\uff1a{0}', proposal.targetLabel),
-			{ preview: true }
+			vscode.l10n.t('Beam \u63d0\u8bae\uff1a{0}', proposal.targetLabel),
+			{ preview: true, preserveFocus: false }
 		);
 	}
 

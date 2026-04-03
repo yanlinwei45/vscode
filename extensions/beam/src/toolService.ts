@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { CursorContextService } from './cursorContextService';
+import { BeamContextService } from './contextService';
 import { getEditorLabel, getPreferredCodeEditor, revealEditorRange, selectCurrentBlock, selectCurrentFunction, setEditorRangeSelection } from './editorContext';
-import { CursorProposalService } from './cursorProposalService';
+import { BeamProposalService } from './proposalService';
 
 const MAX_READ_LENGTH = 20000;
 const MAX_SEARCH_RESULTS = 20;
@@ -16,7 +16,7 @@ const MAX_COMMAND_OUTPUT = 4000;
 const COMMAND_TIMEOUT_MS = 120000;
 const SAFE_COMMAND_PATTERN = /^[\w./:@%+=, -]+$/;
 
-export interface ICursorToolDefinition {
+export interface IBeamToolDefinition {
 	readonly name: string;
 	readonly description: string;
 	readonly input_schema: {
@@ -26,22 +26,22 @@ export interface ICursorToolDefinition {
 	};
 }
 
-export interface ICursorToolCallResult {
+export interface IBeamToolCallResult {
 	readonly toolName: string;
 	readonly content: string;
 }
 
-export class CursorToolService {
+export class BeamToolService {
 
 	private readonly managedTerminals = new Set<vscode.Terminal>();
 
 	constructor(
-		private readonly contextService: CursorContextService,
-		private readonly proposalService: CursorProposalService,
+		private readonly contextService: BeamContextService,
+		private readonly proposalService: BeamProposalService,
 		private readonly outputChannel: vscode.OutputChannel
 	) { }
 
-	getDefinitions(): readonly ICursorToolDefinition[] {
+	getDefinitions(): readonly IBeamToolDefinition[] {
 		return [
 			{
 				name: 'get_active_editor_context',
@@ -215,7 +215,7 @@ export class CursorToolService {
 		];
 	}
 
-	async invoke(toolName: string, input: unknown): Promise<ICursorToolCallResult> {
+	async invoke(toolName: string, input: unknown): Promise<IBeamToolCallResult> {
 		this.log(vscode.l10n.t('\u6b63\u5728\u8c03\u7528\u5de5\u5177 {0}\u3002', toolName));
 		switch (toolName) {
 			case 'get_active_editor_context':
@@ -527,7 +527,7 @@ export class CursorToolService {
 		}
 
 		const terminal = vscode.window.createTerminal({
-			name: 'Cursor \u667a\u80fd\u4f53',
+			name: 'Beam',
 			cwd
 		});
 		this.managedTerminals.add(terminal);
@@ -572,7 +572,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown, name: string): string {
 	if (typeof value !== 'string' || !value.trim()) {
-		throw new Error(vscode.l10n.t('{0} must be a non-empty string.', name));
+		throw new Error(vscode.l10n.t('{0} \u5fc5\u987b\u662f\u975e\u7a7a\u5b57\u7b26\u4e32\u3002', name));
 	}
 
 	return value;
@@ -580,7 +580,7 @@ function asString(value: unknown, name: string): string {
 
 function asStringAllowEmpty(value: unknown, name: string): string {
 	if (typeof value !== 'string') {
-		throw new Error(vscode.l10n.t('{0} must be a string.', name));
+		throw new Error(vscode.l10n.t('{0} \u5fc5\u987b\u662f\u5b57\u7b26\u4e32\u3002', name));
 	}
 
 	return value;
@@ -592,7 +592,7 @@ function asOptionalString(value: unknown): string | undefined {
 
 function asNumber(value: unknown, name: string): number {
 	if (typeof value !== 'number' || Number.isNaN(value)) {
-		throw new Error(vscode.l10n.t('{0} must be a number.', name));
+		throw new Error(vscode.l10n.t('{0} \u5fc5\u987b\u662f\u6570\u5b57\u3002', name));
 	}
 
 	return value;

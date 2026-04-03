@@ -9,36 +9,48 @@ import { getEditorLabel, getEditorSelectionSnapshot, getPreferredCodeEditor } fr
 const MAX_ATTACHMENT_PREVIEW = 220;
 const MAX_FILE_PREVIEW = 260;
 const MAX_PROBLEM_PREVIEW = 240;
+const MAX_ATTACHMENT_CONTEXT_CHARS = 7000;
+const MAX_TOTAL_ATTACHMENT_CONTEXT_CHARS = 12000;
 
-type CursorComposerAttachmentKind = 'selection' | 'file' | 'problems';
+type BeamComposerAttachmentKind = 'selection' | 'file' | 'problems';
 
-interface ICursorComposerAttachment {
+interface IBeamComposerAttachment {
 	readonly id: string;
-	readonly kind: CursorComposerAttachmentKind;
+	readonly kind: BeamComposerAttachmentKind;
 	readonly label: string;
 	readonly detail: string;
 	readonly preview: string;
 	readonly content: string;
+	readonly included: boolean;
 }
 
-export interface ICursorComposerAttachmentState {
+type IBeamComposerAttachmentDraft = Omit<IBeamComposerAttachment, 'included'>;
+
+export interface IBeamComposerAttachmentState {
 	readonly id: string;
-	readonly kind: CursorComposerAttachmentKind;
+	readonly kind: BeamComposerAttachmentKind;
 	readonly label: string;
 	readonly detail: string;
 	readonly preview: string;
+	readonly included: boolean;
+	readonly contentLength: number;
 }
 
-export interface ICursorComposerState {
-	readonly attachments: readonly ICursorComposerAttachmentState[];
+interface IBeamComposerAttachmentReference {
+	readonly kind: BeamComposerAttachmentKind;
+	readonly label: string;
 }
 
-export class CursorComposerService extends vscode.Disposable {
+export interface IBeamComposerState {
+	readonly attachments: readonly IBeamComposerAttachmentState[];
+}
 
-	private readonly _onDidChangeState = new vscode.EventEmitter<ICursorComposerState>();
+export class BeamComposerService extends vscode.Disposable {
+
+	private readonly _onDidChangeState = new vscode.EventEmitter<IBeamComposerState>();
 	readonly onDidChangeState = this._onDidChangeState.event;
 
-	private attachments: ICursorComposerAttachment[] = [];
+	private attachments: IBeamComposerAttachment[] = [];
 
 	constructor() {
 		super(() => {
@@ -46,15 +58,9 @@ export class CursorComposerService extends vscode.Disposable {
 		});
 	}
 
-	getState(): ICursorComposerState {
+	getState(): IBeamComposerState {
 		return {
-			attachments: this.attachments.map(attachment => ({
-				id: attachment.id,
-				kind: attachment.kind,
-				label: attachment.label,
-				detail: attachment.detail,
-				preview: attachment.preview
-			}))
+			attachments: this.attachments.map(toAttachmentState)
 		};
 	}
 
@@ -81,11 +87,30 @@ export class CursorComposerService extends vscode.Disposable {
 		this.fireState();
 	}
 
-	addSelectionAttachment(): boolean {
+	toggleAttachment(id: string): void {
+		let changed = false;
+		this.attachments = this.attachments.map(attachment => {
+			if (attachment.id !== id) {
+				return attachment;
+			}
+
+			changed = true;
+			return {
+				...attachment,
+				included: !attachment.included
+			};
+		});
+
+		if (changed) {
+			this.fireState();
+		}
+	}
+
+	addSelectionAttachment(): IBeamComposerAttachmentState | undefined {
 		const editor = getPreferredCodeEditor();
 		const snapshot = getEditorSelectionSnapshot(editor, MAX_ATTACHMENT_PREVIEW);
 		if (!editor || !snapshot) {
-			return false;
+			return undefined;
 		}
 
 		const content = [
@@ -98,7 +123,7 @@ export class CursorComposerService extends vscode.Disposable {
 			'```'
 		].join('\n');
 
-		this.upsertAttachment({
+		return this.upsertAttachment({
 			id: `selection:${editor.document.uri.toString()}:${editor.selection.start.line}:${editor.selection.start.character}:${editor.selection.end.line}:${editor.selection.end.character}`,
 			kind: 'selection',
 			label: snapshot.fileLabel,
@@ -106,18 +131,17 @@ export class CursorComposerService extends vscode.Disposable {
 			preview: snapshot.preview || vscode.l10n.t('\u7a7a\u9009\u533a'),
 			content
 		});
-		return true;
 	}
 
-	addCurrentFileAttachment(): boolean {
+	addCurrentFileAttachment(): IBeamComposerAttachmentState | undefined {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			return false;
+			return undefined;
 		}
 
 		const document = editor.document;
 		const language = document.languageId || 'plaintext';
-		this.upsertAttachment({
+		return this.upsertAttachment({
 			id: `file:${document.uri.toString()}`,
 			kind: 'file',
 			label: getEditorLabel(document.uri),
@@ -132,18 +156,17 @@ export class CursorComposerService extends vscode.Disposable {
 				'```'
 			].join('\n')
 		});
-		return true;
 	}
 
-	addProblemsAttachment(): boolean {
+	addProblemsAttachment(): IBeamComposerAttachmentState | undefined {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			return false;
+			return undefined;
 		}
 
 		const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
 		if (!diagnostics.length) {
-			return false;
+			return undefined;
 		}
 
 		const lines = diagnostics.map((diagnostic, index) => {
@@ -153,7 +176,7 @@ export class CursorComposerService extends vscode.Disposable {
 			return `${index + 1}. [${formatSeverity(diagnostic.severity)}] \u7b2c ${line} \u884c\uff0c\u7b2c ${column} \u5217${source}\uff1a${diagnostic.message}`;
 		});
 
-		this.upsertAttachment({
+		return this.upsertAttachment({
 			id: `problems:${editor.document.uri.toString()}`,
 			kind: 'problems',
 			label: getEditorLabel(editor.document.uri),
@@ -165,31 +188,81 @@ export class CursorComposerService extends vscode.Disposable {
 				...lines
 			].join('\n')
 		});
-		return true;
 	}
 
-	buildAttachmentContext(): string | undefined {
-		if (!this.attachments.length) {
+	buildAttachmentContext(prompt?: string): string | undefined {
+		const attachments = this.getContextAttachments(prompt);
+		if (!attachments.length) {
 			return undefined;
+		}
+
+		const blocks: string[] = [];
+		let used = 0;
+
+		for (const attachment of attachments) {
+			const content = truncateText(attachment.content, MAX_ATTACHMENT_CONTEXT_CHARS);
+			if (blocks.length && used + content.length > MAX_TOTAL_ATTACHMENT_CONTEXT_CHARS) {
+				break;
+			}
+
+			blocks.push(content);
+			used += content.length;
 		}
 
 		return [
 			'\u5df2\u9644\u52a0\u5230\u5bf9\u8bdd\u7684\u4e0a\u4e0b\u6587\uff1a',
-			...this.attachments.map(attachment => attachment.content)
+			...blocks
 		].join('\n\n');
 	}
 
-	private upsertAttachment(attachment: ICursorComposerAttachment): void {
+	private getContextAttachments(prompt?: string): readonly IBeamComposerAttachment[] {
+		const included = this.attachments.filter(attachment => attachment.included);
+		if (!included.length) {
+			return [];
+		}
+
+		if (!prompt?.trim()) {
+			return included;
+		}
+
+		const referenced = included.filter(attachment => prompt.includes(formatAttachmentReference(attachment)));
+		return referenced.length ? referenced : included;
+	}
+
+	private upsertAttachment(attachment: IBeamComposerAttachmentDraft): IBeamComposerAttachmentState {
 		this.attachments = [
-			attachment,
+			{
+				...attachment,
+				included: true
+			},
 			...this.attachments.filter(existing => existing.id !== attachment.id)
 		].slice(0, 6);
 		this.fireState();
+		return toAttachmentState({
+			...attachment,
+			included: true
+		});
 	}
 
 	private fireState(): void {
 		this._onDidChangeState.fire(this.getState());
 	}
+}
+
+function toAttachmentState(attachment: IBeamComposerAttachment): IBeamComposerAttachmentState {
+	return {
+		id: attachment.id,
+		kind: attachment.kind,
+		label: attachment.label,
+		detail: attachment.detail,
+		preview: attachment.preview,
+		included: attachment.included,
+		contentLength: attachment.content.length
+	};
+}
+
+export function formatAttachmentReference(attachment: IBeamComposerAttachmentReference): string {
+	return `[@${attachment.kind}: ${attachment.label}]`;
 }
 
 function truncateText(value: string, maxLength: number): string {

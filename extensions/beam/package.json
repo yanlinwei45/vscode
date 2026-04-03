@@ -1,5 +1,5 @@
 {
-  "name": "cursor-agent",
+  "name": "beam",
   "displayName": "%displayName%",
   "description": "%description%",
   "version": "0.0.1",
@@ -15,27 +15,31 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished",
-    "onView:cursorAgent.sidebar",
-    "onCommand:cursorAgent.open",
-    "onCommand:cursorAgent.sendSelection",
-    "onCommand:cursorAgent.sendCurrentFile",
-    "onCommand:cursorAgent.sendProblems",
-    "onCommand:cursorAgent.showLogs",
-    "onCommand:cursorAgent.insertCodeBlock",
-    "onCommand:cursorAgent.replaceSelectionWithCodeBlock",
-    "onCommand:cursorAgent.previewInsertCodeBlock",
-    "onCommand:cursorAgent.previewReplaceSelectionWithCodeBlock",
-    "onCommand:cursorAgent.acceptProposal",
-    "onCommand:cursorAgent.rejectProposal",
-    "onCommand:cursorAgent.analyzeCurrentContext",
-    "onCommand:cursorAgent.selectCurrentFunction",
-    "onCommand:cursorAgent.selectCurrentBlock",
-    "onCommand:cursorAgent.focusSelection",
-    "onCommand:cursorAgent.askAboutSelection",
-    "onCommand:cursorAgent.addSelectionToChat",
-    "onCommand:cursorAgent.editSelection",
-    "onCommand:cursorAgent.explainSelection",
-    "onCommand:cursorAgent.fixCurrentFile"
+    "onView:beam.sidebar",
+    "onCommand:beam.open",
+    "onCommand:beam.sendSelection",
+    "onCommand:beam.sendCurrentFile",
+    "onCommand:beam.sendProblems",
+    "onCommand:beam.showLogs",
+    "onCommand:beam.insertCodeBlock",
+    "onCommand:beam.replaceSelectionWithCodeBlock",
+    "onCommand:beam.previewInsertCodeBlock",
+    "onCommand:beam.previewReplaceSelectionWithCodeBlock",
+    "onCommand:beam.acceptProposal",
+    "onCommand:beam.rejectProposal",
+    "onCommand:beam.openProposalDiff",
+    "onCommand:beam.openPendingChange",
+    "onCommand:beam.acceptAllChanges",
+    "onCommand:beam.rejectAllChanges",
+    "onCommand:beam.analyzeCurrentContext",
+    "onCommand:beam.selectCurrentFunction",
+    "onCommand:beam.selectCurrentBlock",
+    "onCommand:beam.focusSelection",
+    "onCommand:beam.askAboutSelection",
+    "onCommand:beam.addSelectionToChat",
+    "onCommand:beam.editSelection",
+    "onCommand:beam.explainSelection",
+    "onCommand:beam.fixCurrentFile"
   ],
   "capabilities": {
     "virtualWorkspaces": true,
@@ -47,247 +51,265 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "cursor-agent",
+          "id": "beam",
           "title": "%container.title%",
           "icon": "media/activitybar.svg"
         }
       ]
     },
     "views": {
-      "cursor-agent": [
+      "beam": [
         {
-          "id": "cursorAgent.sidebar",
+          "id": "beam.sidebar",
           "type": "webview",
           "name": "%view.name%",
           "icon": "media/activitybar.svg"
+        },
+        {
+          "id": "beam.pendingChanges",
+          "name": "Pending Changes"
         }
       ]
     },
     "commands": [
       {
-        "command": "cursorAgent.open",
+        "command": "beam.open",
         "title": "%command.open%",
         "category": "%command.category%"
       },
       {
-        "command": "cursorAgent.sendSelection",
+        "command": "beam.sendSelection",
         "title": "%command.sendSelection%",
         "category": "%command.category%",
         "icon": "$(send)"
       },
       {
-        "command": "cursorAgent.newChat",
+        "command": "beam.newChat",
         "title": "%command.newChat%",
         "category": "%command.category%",
         "icon": "$(add)"
       },
       {
-        "command": "cursorAgent.sendCurrentFile",
+        "command": "beam.sendCurrentFile",
         "title": "%command.sendCurrentFile%",
         "category": "%command.category%",
         "icon": "$(file-code)"
       },
       {
-        "command": "cursorAgent.sendProblems",
+        "command": "beam.sendProblems",
         "title": "%command.sendProblems%",
         "category": "%command.category%",
         "icon": "$(warning)"
       },
       {
-        "command": "cursorAgent.showLogs",
+        "command": "beam.showLogs",
         "title": "%command.showLogs%",
         "category": "%command.category%",
         "icon": "$(output)"
       },
       {
-        "command": "cursorAgent.insertCodeBlock",
+        "command": "beam.insertCodeBlock",
         "title": "%command.insertCodeBlock%",
         "category": "%command.category%"
       },
       {
-        "command": "cursorAgent.replaceSelectionWithCodeBlock",
+        "command": "beam.replaceSelectionWithCodeBlock",
         "title": "%command.replaceSelectionWithCodeBlock%",
         "category": "%command.category%"
       },
       {
-        "command": "cursorAgent.previewInsertCodeBlock",
+        "command": "beam.previewInsertCodeBlock",
         "title": "%command.previewInsertCodeBlock%",
         "category": "%command.category%"
       },
       {
-        "command": "cursorAgent.previewReplaceSelectionWithCodeBlock",
+        "command": "beam.previewReplaceSelectionWithCodeBlock",
         "title": "%command.previewReplaceSelectionWithCodeBlock%",
         "category": "%command.category%"
       },
       {
-        "command": "cursorAgent.acceptProposal",
+        "command": "beam.acceptProposal",
         "title": "%command.acceptProposal%",
         "category": "%command.category%",
         "icon": "$(check)"
       },
       {
-        "command": "cursorAgent.rejectProposal",
+        "command": "beam.rejectProposal",
         "title": "%command.rejectProposal%",
         "category": "%command.category%",
         "icon": "$(close)"
       },
       {
-        "command": "cursorAgent.analyzeCurrentContext",
+        "command": "beam.openProposalDiff",
+        "title": "打开提议对比视图",
+        "category": "%command.category%",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "beam.openPendingChange",
+        "title": "打开待处理更改",
+        "category": "%command.category%",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "beam.acceptAllChanges",
+        "title": "接受所有更改",
+        "category": "%command.category%",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "beam.rejectAllChanges",
+        "title": "拒绝所有更改",
+        "category": "%command.category%",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "beam.analyzeCurrentContext",
         "title": "%command.analyzeCurrentContext%",
         "category": "%command.category%",
         "icon": "$(lightbulb)"
       },
       {
-        "command": "cursorAgent.selectCurrentFunction",
+        "command": "beam.selectCurrentFunction",
         "title": "%command.selectCurrentFunction%",
         "category": "%command.category%",
         "icon": "$(symbol-method)"
       },
       {
-        "command": "cursorAgent.selectCurrentBlock",
+        "command": "beam.selectCurrentBlock",
         "title": "%command.selectCurrentBlock%",
         "category": "%command.category%",
         "icon": "$(selection)"
       },
       {
-        "command": "cursorAgent.focusSelection",
+        "command": "beam.focusSelection",
         "title": "%command.focusSelection%",
         "category": "%command.category%",
         "icon": "$(target)"
       },
       {
-        "command": "cursorAgent.askAboutSelection",
+        "command": "beam.askAboutSelection",
         "title": "%command.askAboutSelection%",
         "category": "%command.category%",
         "icon": "$(comment-discussion)"
       },
       {
-        "command": "cursorAgent.addSelectionToChat",
+        "command": "beam.addSelectionToChat",
         "title": "%command.addSelectionToChat%",
         "category": "%command.category%",
         "icon": "$(add)"
       },
       {
-        "command": "cursorAgent.editSelection",
+        "command": "beam.editSelection",
         "title": "%command.editSelection%",
         "category": "%command.category%",
         "icon": "$(edit)"
       },
       {
-        "command": "cursorAgent.explainSelection",
+        "command": "beam.explainSelection",
         "title": "%command.explainSelection%",
         "category": "%command.category%",
         "icon": "$(comment)"
       },
       {
-        "command": "cursorAgent.fixCurrentFile",
+        "command": "beam.fixCurrentFile",
         "title": "%command.fixCurrentFile%",
         "category": "%command.category%",
         "icon": "$(wrench)"
       }
     ],
     "menus": {
-      "editor/context": [
-        {
-          "command": "cursorAgent.addSelectionToChat",
-          "when": "editorHasSelection"
-        },
-        {
-          "command": "cursorAgent.editSelection",
-          "when": "editorHasSelection"
-        },
-        {
-          "command": "cursorAgent.explainSelection",
-          "when": "editorHasSelection"
-        },
-        {
-          "command": "cursorAgent.askAboutSelection",
-          "when": "editorHasSelection"
-        },
-        {
-          "command": "cursorAgent.selectCurrentFunction"
-        },
-        {
-          "command": "cursorAgent.selectCurrentBlock"
-        },
-        {
-          "command": "cursorAgent.sendCurrentFile"
-        }
-      ],
       "commandPalette": [
         {
-          "command": "cursorAgent.open"
+          "command": "beam.open"
         },
         {
-          "command": "cursorAgent.sendSelection"
+          "command": "beam.sendSelection"
         },
         {
-          "command": "cursorAgent.newChat"
+          "command": "beam.newChat"
         },
         {
-          "command": "cursorAgent.sendCurrentFile"
+          "command": "beam.sendCurrentFile"
         },
         {
-          "command": "cursorAgent.sendProblems"
+          "command": "beam.sendProblems"
         },
         {
-          "command": "cursorAgent.showLogs"
+          "command": "beam.showLogs"
         },
         {
-          "command": "cursorAgent.acceptProposal"
+          "command": "beam.acceptProposal"
         },
         {
-          "command": "cursorAgent.rejectProposal"
+          "command": "beam.rejectProposal"
         },
         {
-          "command": "cursorAgent.analyzeCurrentContext"
+          "command": "beam.analyzeCurrentContext"
         },
         {
-          "command": "cursorAgent.selectCurrentFunction"
+          "command": "beam.selectCurrentFunction"
         },
         {
-          "command": "cursorAgent.selectCurrentBlock"
+          "command": "beam.selectCurrentBlock"
         },
         {
-          "command": "cursorAgent.focusSelection"
+          "command": "beam.focusSelection"
         },
         {
-          "command": "cursorAgent.askAboutSelection"
+          "command": "beam.askAboutSelection"
         },
         {
-          "command": "cursorAgent.editSelection"
+          "command": "beam.editSelection"
         },
         {
-          "command": "cursorAgent.explainSelection"
+          "command": "beam.explainSelection"
         },
         {
-          "command": "cursorAgent.fixCurrentFile"
+          "command": "beam.fixCurrentFile"
         }
       ],
       "view/title": [
         {
-          "command": "cursorAgent.newChat",
-          "when": "view == cursorAgent.sidebar",
+          "command": "beam.acceptAllChanges",
+          "when": "view == beam.pendingChanges",
           "group": "navigation"
+        },
+        {
+          "command": "beam.rejectAllChanges",
+          "when": "view == beam.pendingChanges",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "beam.acceptProposal",
+          "when": "view == beam.pendingChanges && viewItem == pendingChange",
+          "group": "inline"
+        },
+        {
+          "command": "beam.rejectProposal",
+          "when": "view == beam.pendingChanges && viewItem == pendingChange",
+          "group": "inline"
         }
       ]
     },
     "configuration": {
-      "title": "Cursor 智能体",
+      "title": "Beam",
       "properties": {
-        "cursorAgent.systemPrompt": {
+        "beam.systemPrompt": {
           "type": "string",
-          "default": "你是 Cursor，一个在 VS Code 中工作的资深编码助手。请保持简洁、务实，并专注于代码与执行。",
+          "default": "你是 Beam，一个在 VS Code 中工作的资深编码助手。请保持简洁、务实，并专注于代码与执行。",
           "description": "%config.systemPrompt.description%",
           "scope": "application"
         },
-        "cursorAgent.model": {
+        "beam.model": {
           "type": "string",
           "default": "claude-sonnet-4-20250514",
           "description": "%config.model.description%",
           "scope": "application"
         },
-        "cursorAgent.baseUrl": {
+        "beam.baseUrl": {
           "type": "string",
           "default": "",
           "description": "%config.baseUrl.description%",

@@ -6,8 +6,8 @@
 import * as vscode from 'vscode';
 import { getEditorLabel, getEditorSelectionSnapshot, getPreferredCodeEditor } from './editorContext';
 
-const RECENT_FILES_KEY = 'cursorAgent.recentFiles.v1';
-const FAILED_TERMINALS_KEY = 'cursorAgent.failedTerminalCommands.v1';
+const RECENT_FILES_KEY = 'beam.recentFiles.v1';
+const FAILED_TERMINALS_KEY = 'beam.failedTerminalCommands.v1';
 const MAX_RECENT_FILES = 8;
 const MAX_FAILED_COMMANDS = 4;
 const MAX_FAILURE_OUTPUT = 1200;
@@ -33,7 +33,7 @@ interface ITerminalCapture {
 	output: string;
 }
 
-export interface ICursorContextState {
+export interface IBeamContextState {
 	readonly summary: readonly string[];
 	readonly selection?: {
 		readonly fileLabel: string;
@@ -44,9 +44,9 @@ export interface ICursorContextState {
 	};
 }
 
-export class CursorContextService implements vscode.Disposable {
+export class BeamContextService implements vscode.Disposable {
 
-	private readonly _onDidChangeState = new vscode.EventEmitter<ICursorContextState>();
+	private readonly _onDidChangeState = new vscode.EventEmitter<IBeamContextState>();
 	readonly onDidChangeState = this._onDidChangeState.event;
 
 	private readonly disposables: vscode.Disposable[] = [];
@@ -85,7 +85,7 @@ export class CursorContextService implements vscode.Disposable {
 		vscode.Disposable.from(...this.disposables).dispose();
 	}
 
-	getState(): ICursorContextState {
+	getState(): IBeamContextState {
 		const summary: string[] = [];
 		const activeEditor = getPreferredCodeEditor();
 		const selection = getEditorSelectionSnapshot(activeEditor);
