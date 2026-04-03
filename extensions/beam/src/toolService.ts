@@ -389,21 +389,15 @@ export class BeamToolService {
 	private async writeFile(input: Record<string, unknown>): Promise<string> {
 		const uri = this.resolveWorkspacePath(input.path);
 		const content = asStringAllowEmpty(input.content, 'content');
-		await this.ensureParentDirectory(uri);
-		await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
-		return vscode.l10n.t('\u5df2\u5411 {1} \u5199\u5165 {0} \u4e2a\u5b57\u7b26\u3002', content.length, getEditorLabel(uri));
+		await this.proposalService.createFileProposal(uri, content, 'file');
+		return vscode.l10n.t('\u5df2\u4e3a {1} \u751f\u6210 {0} \u4e2a\u5b57\u7b26\u7684\u6587\u4ef6\u66f4\u6539\u63d0\u8bae\u3002', content.length, getEditorLabel(uri));
 	}
 
 	private async createFile(input: Record<string, unknown>): Promise<string> {
 		const uri = this.resolveWorkspacePath(input.path);
 		const content = asStringAllowEmpty(input.content, 'content');
-		if (await this.fileExists(uri)) {
-			throw new Error(vscode.l10n.t('{0} \u5df2\u5b58\u5728\u3002', getEditorLabel(uri)));
-		}
-
-		await this.ensureParentDirectory(uri);
-		await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
-		return vscode.l10n.t('\u5df2\u521b\u5efa {0}\u3002', getEditorLabel(uri));
+		await this.proposalService.createFileProposal(uri, content, 'file');
+		return vscode.l10n.t('\u5df2\u4e3a {0} \u751f\u6210\u65b0\u6587\u4ef6\u63d0\u8bae\u3002', getEditorLabel(uri));
 	}
 
 	private async replaceInFile(input: Record<string, unknown>): Promise<string> {
@@ -419,10 +413,10 @@ export class BeamToolService {
 		}
 
 		const nextText = replaceAll ? text.split(search).join(replace) : text.replace(search, replace);
-		await vscode.workspace.fs.writeFile(uri, Buffer.from(nextText, 'utf8'));
+		await this.proposalService.createFileProposal(uri, nextText, 'file');
 
 		const count = replaceAll ? Math.max(0, text.split(search).length - 1) : 1;
-		return vscode.l10n.t('\u5df2\u5728 {1} \u4e2d\u66ff\u6362 {0} \u5904\u5339\u914d\u5185\u5bb9\u3002', count, getEditorLabel(uri));
+		return vscode.l10n.t('\u5df2\u4e3a {1} \u751f\u6210 {0} \u5904\u66ff\u6362\u7684\u63d0\u8bae\u3002', count, getEditorLabel(uri));
 	}
 
 	private async runCommand(input: Record<string, unknown>): Promise<string> {
@@ -502,21 +496,6 @@ export class BeamToolService {
 		}
 
 		return this.resolveWorkspacePath(pathInput);
-	}
-
-	private async fileExists(uri: vscode.Uri): Promise<boolean> {
-		try {
-			await vscode.workspace.fs.stat(uri);
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
-	private async ensureParentDirectory(uri: vscode.Uri): Promise<void> {
-		const parentPath = uri.path.replace(/\/[^/]+$/, '') || '/';
-		const parentUri = uri.with({ path: parentPath });
-		await vscode.workspace.fs.createDirectory(parentUri);
 	}
 
 	private async getOrCreateTerminal(cwd: vscode.Uri | undefined): Promise<vscode.Terminal> {

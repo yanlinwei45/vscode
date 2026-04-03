@@ -14,7 +14,6 @@ import {
 	selectCurrentFunction,
 } from "./editorContext";
 import { BeamProposalService } from "./proposalService";
-import { PendingChangesTreeProvider } from "./pendingChangesView";
 import { BeamSidebarProvider } from "./sidebarProvider";
 import { BeamToolService } from "./toolService";
 
@@ -34,6 +33,9 @@ const OPEN_PROPOSAL_DIFF_COMMAND = "beam.openProposalDiff";
 const OPEN_PENDING_CHANGE_COMMAND = "beam.openPendingChange";
 const ACCEPT_ALL_CHANGES_COMMAND = "beam.acceptAllChanges";
 const REJECT_ALL_CHANGES_COMMAND = "beam.rejectAllChanges";
+const NEXT_PROPOSAL_COMMAND = "beam.nextProposal";
+const PREVIOUS_PROPOSAL_COMMAND = "beam.previousProposal";
+const FOCUS_ACTIVE_PROPOSAL_COMMAND = "beam.focusActiveProposal";
 const ANALYZE_CURRENT_CONTEXT_COMMAND = "beam.analyzeCurrentContext";
 const SELECT_CURRENT_FUNCTION_COMMAND = "beam.selectCurrentFunction";
 const SELECT_CURRENT_BLOCK_COMMAND = "beam.selectCurrentBlock";
@@ -73,7 +75,6 @@ export function activate(context: vscode.ExtensionContext): void {
 		contextService,
 		proposalService,
 	);
-	const pendingChangesTreeProvider = new PendingChangesTreeProvider();
 
 	context.subscriptions.push(outputChannel);
 	context.subscriptions.push(service);
@@ -87,17 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 	);
 
-	context.subscriptions.push(
-		vscode.window.createTreeView("beam.pendingChanges", {
-			treeDataProvider: pendingChangesTreeProvider,
-		}),
-	);
-
-	// Update tree when proposals change
-	proposalService.onDidChangeState(() => {
-		const changes = proposalService.getPendingChanges();
-		pendingChangesTreeProvider.setChanges(changes);
-	});
+	void ensureBeamIsDefaultView(provider);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand("beam.open", async () => {
@@ -188,7 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					return;
 				}
 
-				await applyCodeToActiveEditor(code, "insert");
+				await proposalService.createProposalFromCodeBlock(code, "insert");
 			},
 		),
 	);
@@ -201,7 +192,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					return;
 				}
 
-				await applyCodeToActiveEditor(code, "replace");
+				await proposalService.createProposalFromCodeBlock(code, "replace");
 			},
 		),
 	);
@@ -259,10 +250,28 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
 		vscode.commands.registerCommand(
 			OPEN_PENDING_CHANGE_COMMAND,
-			async (uri: vscode.Uri) => {
-				await proposalService.openPendingChange(uri);
+			async (target: vscode.Uri | string) => {
+				await proposalService.openPendingChange(target);
 			},
 		),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand(NEXT_PROPOSAL_COMMAND, async () => {
+			await proposalService.showNextProposal();
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand(PREVIOUS_PROPOSAL_COMMAND, async () => {
+			await proposalService.showPreviousProposal();
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand(FOCUS_ACTIVE_PROPOSAL_COMMAND, async () => {
+			await proposalService.focusActiveProposalInEditor();
+		}),
 	);
 
 	context.subscriptions.push(
@@ -463,48 +472,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 }
 
-async function applyCodeToActiveEditor(
-	code: string,
-	mode: "insert" | "replace",
-): Promise<void> {
-	const editor = getPreferredCodeEditor();
-	if (!editor) {
-		void vscode.window.showInformationMessage(
-			vscode.l10n.t(
-				"\u8bf7\u5148\u6253\u5f00\u4e00\u4e2a\u6587\u672c\u7f16\u8f91\u5668\uff0c\u518d\u5e94\u7528 Beam \u751f\u6210\u7684\u4ee3\u7801\u3002",
-			),
-		);
-		return;
-	}
-
-	if (
-		mode === "replace" &&
-		editor.selections.every((selection) => selection.isEmpty)
-	) {
-		void vscode.window.showInformationMessage(
-			vscode.l10n.t(
-				"\u8bf7\u5148\u5728\u7f16\u8f91\u5668\u4e2d\u9009\u4e2d\u8981\u66ff\u6362\u7684\u4ee3\u7801\u3002",
-			),
-		);
-		return;
-	}
-
-	await editor.edit((editBuilder) => {
-		if (mode === "replace") {
-			for (const selection of editor.selections) {
-				if (!selection.isEmpty) {
-					editBuilder.replace(selection, code);
-				}
-			}
-			return;
-		}
-
-		for (const selection of editor.selections) {
-			editBuilder.insert(selection.active, code);
-		}
-	});
-}
-
 async function revealSidebar(
 	provider: BeamSidebarProvider,
 	focusComposer: boolean = false,
@@ -514,6 +481,13 @@ async function revealSidebar(
 	if (focusComposer) {
 		provider.focusComposer();
 	}
+}
+
+async function ensureBeamIsDefaultView(
+	provider: BeamSidebarProvider,
+): Promise<void> {
+	await revealSidebar(provider, false);
+	await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
 }
 
 async function handleSelectionAction(
@@ -536,6 +510,13 @@ async function handleSelectionAction(
 	}
 	return true;
 }
+
+type IBeamDecorationAttachmentRenderOptions =
+	vscode.ThemableDecorationAttachmentRenderOptions & {
+		readonly fontSize?: string;
+		readonly borderRadius?: string;
+		readonly padding?: string;
+	};
 
 class BeamProposalCodeLensProvider implements vscode.CodeLensProvider {
 	constructor(private readonly proposalService: BeamProposalService) {}
@@ -574,6 +555,20 @@ class BeamProposalCodeLensProvider implements vscode.CodeLensProvider {
 					"在对比视图中查看完整差异",
 				),
 			}),
+			...(proposal.total > 1
+				? [
+					new vscode.CodeLens(range, {
+						title: `$(arrow-left) ${vscode.l10n.t("上一个文件")}`,
+						command: PREVIOUS_PROPOSAL_COMMAND,
+						tooltip: vscode.l10n.t("查看上一个待确认文件"),
+					}),
+					new vscode.CodeLens(range, {
+						title: `$(arrow-right) ${vscode.l10n.t("下一个文件")}`,
+						command: NEXT_PROPOSAL_COMMAND,
+						tooltip: vscode.l10n.t("查看下一个待确认文件"),
+					}),
+				]
+				: []),
 		];
 	}
 }
@@ -584,21 +579,45 @@ class BeamSelectionCodeLensProvider
 	private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
 	readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 	private readonly localDisposables: vscode.Disposable[] = [];
+	private readonly askBeamDecorationAttachment: IBeamDecorationAttachmentRenderOptions = {
+		contentText: `  ${vscode.l10n.t("Ask Beam Assistant")} / ${vscode.l10n.t("Edit with Beam")}`,
+		fontWeight: '700',
+		fontSize: '13px',
+		color: new vscode.ThemeColor('editorInfo.foreground'),
+		backgroundColor: new vscode.ThemeColor('editorInfo.background'),
+		margin: '0 0 0 12px',
+		border: '1px solid',
+		borderColor: new vscode.ThemeColor('editorInfo.border'),
+		borderRadius: '999px',
+		padding: '3px 10px',
+	};
+	private readonly askBeamDecorationType = vscode.window.createTextEditorDecorationType({
+		isWholeLine: true,
+		after: this.askBeamDecorationAttachment,
+	});
 
 	constructor(private readonly proposalService: BeamProposalService) {
 		this.localDisposables.push(
 			vscode.window.onDidChangeTextEditorSelection(() =>
-				this._onDidChangeCodeLenses.fire(),
+				this.refreshDecorations(),
 			),
 		);
 		this.localDisposables.push(
 			vscode.window.onDidChangeActiveTextEditor(() =>
-				this._onDidChangeCodeLenses.fire(),
+				this.refreshDecorations(),
 			),
 		);
+		this.localDisposables.push(
+			this.proposalService.onDidChangeState(() => this.refreshDecorations()),
+		);
+		this.refreshDecorations();
 	}
 
 	dispose(): void {
+		for (const editor of vscode.window.visibleTextEditors) {
+			editor.setDecorations(this.askBeamDecorationType, []);
+		}
+		this.askBeamDecorationType.dispose();
 		vscode.Disposable.from(...this.localDisposables).dispose();
 		this._onDidChangeCodeLenses.dispose();
 	}
@@ -620,10 +639,51 @@ class BeamSelectionCodeLensProvider
 		const range = new vscode.Range(line, 0, line, 0);
 		return [
 			new vscode.CodeLens(range, {
-				title: `$(sparkle) ${vscode.l10n.t("Ask Beam")}`,
+				title: `$(sparkle) ${vscode.l10n.t("Ask Beam Assistant")}`,
 				command: ASK_ABOUT_SELECTION_COMMAND,
 				tooltip: vscode.l10n.t("带着这段选区直接向 Beam 提问"),
 			}),
+			new vscode.CodeLens(range, {
+				title: `$(edit) ${vscode.l10n.t("Edit with Beam")}`,
+				command: EDIT_SELECTION_COMMAND,
+				tooltip: vscode.l10n.t("让 Beam 直接修改当前选区"),
+			}),
+		];
+	}
+
+	private refreshDecorations(): void {
+		this._onDidChangeCodeLenses.fire();
+		for (const editor of vscode.window.visibleTextEditors) {
+			editor.setDecorations(this.askBeamDecorationType, this.createDecorationOptions(editor));
+		}
+	}
+
+	private createDecorationOptions(editor: vscode.TextEditor): vscode.DecorationOptions[] {
+		const proposal = this.proposalService.getActiveProposal();
+		if (
+			editor.document.uri.scheme !== 'file' &&
+			editor.document.uri.scheme !== 'untitled'
+		) {
+			return [];
+		}
+
+		if (
+			proposal &&
+			proposal.originalUri.toString() === editor.document.uri.toString()
+		) {
+			return [];
+		}
+
+		if (editor.selections.length !== 1 || editor.selection.isEmpty) {
+			return [];
+		}
+
+		const line = editor.selection.end.line;
+		return [
+			{
+				range: new vscode.Range(line, Number.MAX_SAFE_INTEGER, line, Number.MAX_SAFE_INTEGER),
+				hoverMessage: new vscode.MarkdownString(vscode.l10n.t('使用上方的 **Ask Beam Assistant** 或 **Edit with Beam** 操作处理当前选区。')),
+			}
 		];
 	}
 }

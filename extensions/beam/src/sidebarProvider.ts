@@ -164,14 +164,15 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const emptyState = vscode.l10n.t('\u4ece\u8fd9\u91cc\u76f4\u63a5\u5f00\u59cb\u4e00\u6bb5\u65b0\u5bf9\u8bdd\u3002');
 		const send = vscode.l10n.t('\u53d1\u9001');
 		const thinking = vscode.l10n.t('\u601d\u8003\u4e2d...');
-		const insertLabel = vscode.l10n.t('\u76f4\u63a5\u63d2\u5165');
-		const replaceLabel = vscode.l10n.t('\u76f4\u63a5\u66ff\u6362');
 		const previewInsertLabel = vscode.l10n.t('\u9884\u89c8\u63d2\u5165');
 		const previewReplaceLabel = vscode.l10n.t('\u9884\u89c8\u66ff\u6362');
 		const proposalTitle = vscode.l10n.t('\u7f16\u8f91\u63d0\u6848');
+		const proposalFilesLabel = vscode.l10n.t('\u5f85\u786e\u8ba4\u6587\u4ef6');
 		const acceptLabel = vscode.l10n.t('\u63a5\u53d7');
 		const rejectLabel = vscode.l10n.t('\u62d2\u7edd');
 		const reopenProposalLabel = vscode.l10n.t('\u6253\u5f00\u5bf9\u6bd4');
+		const nextProposalLabel = vscode.l10n.t('\u4e0b\u4e00\u4e2a\u6587\u4ef6');
+		const previousProposalLabel = vscode.l10n.t('\u4e0a\u4e00\u4e2a\u6587\u4ef6');
 		const toolSummaryLabel = vscode.l10n.t('\u540e\u53f0\u6267\u884c');
 		const toolDetailsLabel = vscode.l10n.t('\u5c55\u5f00\u8be6\u60c5');
 		const toolCollapseLabel = vscode.l10n.t('\u6536\u8d77\u8be6\u60c5');
@@ -179,6 +180,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const runningToolLabel = vscode.l10n.t('\u6b63\u5728\u5904\u7406\uff1a{0}');
 		const proposalInsertModeLabel = vscode.l10n.t('\u63d2\u5165');
 		const proposalReplaceModeLabel = vscode.l10n.t('\u66ff\u6362');
+		const proposalFileModeLabel = vscode.l10n.t('\u6587\u4ef6');
 		const fallbackPrompt = vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002');
 		const assistantLabel = vscode.l10n.t('\u667a\u80fd\u4f53');
 		const userLabel = vscode.l10n.t('\u4f60');
@@ -467,6 +469,27 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			opacity: 0.86;
 			word-break: break-word;
 		}
+		.proposal-files {
+			display: none;
+			gap: 6px;
+			flex-wrap: wrap;
+		}
+		.proposal-files.active {
+			display: flex;
+		}
+		.proposal-file-chip {
+			border-radius: 999px;
+			padding: 5px 9px;
+			font-size: 11px;
+			border: 1px solid var(--vscode-panel-border);
+			background: color-mix(in srgb, var(--vscode-editor-background) 85%, transparent);
+			cursor: pointer;
+		}
+		.proposal-file-chip.active {
+			border-color: color-mix(in srgb, var(--vscode-button-background) 36%, var(--vscode-panel-border));
+			background: color-mix(in srgb, var(--vscode-button-background) 16%, transparent);
+			font-weight: 700;
+		}
 		.proposal-actions {
 			display: flex;
 			justify-content: flex-end;
@@ -567,6 +590,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			font: inherit;
 			line-height: 1.55;
 			outline: none;
+			overflow-y: hidden;
+		}
+		textarea.prompt-scroll {
 			overflow-y: auto;
 		}
 		.composer-footer {
@@ -642,7 +668,10 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					<div id="proposalMode" class="proposal-mode"></div>
 				</div>
 				<div id="proposalBody" class="proposal-body"></div>
+				<div id="proposalFiles" class="proposal-files"></div>
 				<div class="proposal-actions">
+					<button id="previousProposal" class="secondary">${escapeHtml(previousProposalLabel)}</button>
+					<button id="nextProposal" class="secondary">${escapeHtml(nextProposalLabel)}</button>
 					<button id="reopenProposal" class="secondary">${escapeHtml(reopenProposalLabel)}</button>
 					<button id="rejectProposal" class="secondary">${escapeHtml(rejectLabel)}</button>
 					<button id="acceptProposal">${escapeHtml(acceptLabel)}</button>
@@ -676,11 +705,12 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const proposalEl = document.getElementById('proposal');
 		const proposalBodyEl = document.getElementById('proposalBody');
 		const proposalModeEl = document.getElementById('proposalMode');
+		const proposalFilesEl = document.getElementById('proposalFiles');
+		const previousProposalEl = document.getElementById('previousProposal');
+		const nextProposalEl = document.getElementById('nextProposal');
 		const reopenProposalEl = document.getElementById('reopenProposal');
 		const acceptProposalEl = document.getElementById('acceptProposal');
 		const rejectProposalEl = document.getElementById('rejectProposal');
-		const insertCommand = 'beam.insertCodeBlock';
-		const replaceCommand = 'beam.replaceSelectionWithCodeBlock';
 		const previewInsertCommand = 'beam.previewInsertCodeBlock';
 		const previewReplaceCommand = 'beam.previewReplaceSelectionWithCodeBlock';
 		const toolLabels = {
@@ -731,9 +761,16 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		}
 
 		function syncPromptHeight() {
-			promptEl.style.height = '0px';
-			const nextHeight = Math.max(72, Math.min(promptEl.scrollHeight, 188));
-			promptEl.style.height = nextHeight + 'px';
+			const computed = window.getComputedStyle(promptEl);
+			const lineHeight = Math.max(1, Number.parseFloat(computed.lineHeight) || 20);
+			const padding = (Number.parseFloat(computed.paddingTop) || 0) + (Number.parseFloat(computed.paddingBottom) || 0);
+			const minRows = 3;
+			const maxRows = 8;
+			promptEl.rows = minRows;
+			const contentHeight = Math.max(0, promptEl.scrollHeight - padding);
+			const nextRows = Math.max(minRows, Math.min(maxRows, Math.ceil(contentHeight / lineHeight)));
+			promptEl.rows = nextRows;
+			promptEl.classList.toggle('prompt-scroll', nextRows >= maxRows);
 		}
 
 		function appendPromptValue(value) {
@@ -778,21 +815,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				vscode.postMessage({ type: 'command', command: previewReplaceCommand, args: [code] });
 			});
 			actions.appendChild(previewReplace);
-
-			const insert = document.createElement('button');
-			insert.className = 'secondary';
-			insert.textContent = ${JSON.stringify(insertLabel)};
-			insert.addEventListener('click', () => {
-				vscode.postMessage({ type: 'command', command: insertCommand, args: [code] });
-			});
-			actions.appendChild(insert);
-
-			const replace = document.createElement('button');
-			replace.textContent = ${JSON.stringify(replaceLabel)};
-			replace.addEventListener('click', () => {
-				vscode.postMessage({ type: 'command', command: replaceCommand, args: [code] });
-			});
-			actions.appendChild(replace);
 
 			return actions;
 		}
@@ -1012,13 +1034,44 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				proposalEl.className = 'proposal';
 				proposalModeEl.textContent = '';
 				proposalBodyEl.textContent = '';
+				proposalFilesEl.innerHTML = '';
+				proposalFilesEl.className = 'proposal-files';
+				previousProposalEl.disabled = true;
+				nextProposalEl.disabled = true;
 				reopenProposalEl.disabled = true;
 				return;
 			}
 
 			proposalEl.className = 'proposal active';
-			proposalModeEl.textContent = state.proposal.mode === 'replace' ? ${JSON.stringify(proposalReplaceModeLabel)} : ${JSON.stringify(proposalInsertModeLabel)};
-			proposalBodyEl.textContent = state.proposal.targetLabel || '';
+			proposalModeEl.textContent = state.proposal.mode === 'replace'
+				? ${JSON.stringify(proposalReplaceModeLabel)}
+				: state.proposal.mode === 'file'
+					? ${JSON.stringify(proposalFileModeLabel)}
+					: ${JSON.stringify(proposalInsertModeLabel)};
+			const progress = state.proposal.total ? ' (' + (state.proposal.currentIndex || 1) + '/' + state.proposal.total + ')' : '';
+			proposalBodyEl.textContent = (state.proposal.targetLabel || '') + progress;
+			proposalFilesEl.innerHTML = '';
+			const files = state.proposal.files || [];
+			if (files.length > 1) {
+				proposalFilesEl.className = 'proposal-files active';
+				const label = document.createElement('div');
+				label.className = 'tool-count';
+				label.textContent = ${JSON.stringify(proposalFilesLabel)};
+				proposalFilesEl.appendChild(label);
+				for (const file of files) {
+					const chip = document.createElement('button');
+					chip.className = file.isActive ? 'proposal-file-chip active' : 'proposal-file-chip';
+					chip.textContent = file.label;
+					chip.addEventListener('click', () => {
+						vscode.postMessage({ type: 'command', command: 'beam.openPendingChange', args: [file.id] });
+					});
+					proposalFilesEl.appendChild(chip);
+				}
+			} else {
+				proposalFilesEl.className = 'proposal-files';
+			}
+			previousProposalEl.disabled = !state.proposal.hasMultipleFiles;
+			nextProposalEl.disabled = !state.proposal.hasMultipleFiles;
 			reopenProposalEl.disabled = !state.proposal.reopenable;
 		}
 
@@ -1141,6 +1194,12 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		reopenProposalEl.addEventListener('click', () => {
 			vscode.postMessage({ type: 'command', command: 'beam.reopenProposal' });
 		});
+		previousProposalEl.addEventListener('click', () => {
+			vscode.postMessage({ type: 'command', command: 'beam.previousProposal' });
+		});
+		nextProposalEl.addEventListener('click', () => {
+			vscode.postMessage({ type: 'command', command: 'beam.nextProposal' });
+		});
 		acceptProposalEl.addEventListener('click', () => {
 			vscode.postMessage({ type: 'command', command: 'beam.acceptProposal' });
 		});
@@ -1148,10 +1207,20 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			vscode.postMessage({ type: 'command', command: 'beam.rejectProposal' });
 		});
 		promptEl.addEventListener('keydown', event => {
-			if (event.key === 'Enter' && !event.shiftKey) {
-				event.preventDefault();
-				send();
+			const isPlainEnter = event.key === 'Enter'
+				&& !event.shiftKey
+				&& !event.altKey
+				&& !event.ctrlKey
+				&& !event.metaKey
+				&& !event.isComposing
+				&& !event.repeat;
+			if (!isPlainEnter) {
+				return;
 			}
+
+			event.preventDefault();
+			event.stopPropagation();
+			send();
 		});
 		promptEl.addEventListener('input', () => {
 			syncPromptHeight();

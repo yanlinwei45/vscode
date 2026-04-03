@@ -6,9 +6,12 @@
 import * as vscode from 'vscode';
 
 export interface IPendingFileChange {
+	readonly id: string;
 	readonly uri: vscode.Uri;
 	readonly label: string;
+	readonly mode?: 'replace' | 'insert' | 'file';
 	readonly status: 'pending' | 'accepted' | 'rejected';
+	readonly isActive?: boolean;
 }
 
 export class PendingChangesTreeProvider implements vscode.TreeDataProvider<IPendingFileChange> {
@@ -31,11 +34,18 @@ export class PendingChangesTreeProvider implements vscode.TreeDataProvider<IPend
 		item.command = {
 			command: 'beam.openPendingChange',
 			title: vscode.l10n.t('\u6253\u5f00\u5f85\u5904\u7406\u66f4\u6539'),
-			arguments: [element.uri]
+			arguments: [element.id]
 		};
 		item.contextValue = 'pendingChange';
 		item.resourceUri = element.uri;
-		item.description = element.status === 'pending' ? vscode.l10n.t('\u5f85\u5904\u7406') : element.status;
+		const modeLabel = element.mode === 'insert'
+			? vscode.l10n.t('\u63d2\u5165')
+			: element.mode === 'replace'
+				? vscode.l10n.t('\u66ff\u6362')
+				: vscode.l10n.t('\u6587\u4ef6');
+		item.description = element.isActive
+			? vscode.l10n.t('\u5f53\u524d · {0}', modeLabel)
+			: `${modeLabel}`;
 		return item;
 	}
 

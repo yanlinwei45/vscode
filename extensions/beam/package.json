@@ -11,7 +11,7 @@
   "categories": [
     "Other"
   ],
-  "icon": "media/activitybar.svg",
+  "icon": "media/icon.png",
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished",
@@ -31,6 +31,9 @@
     "onCommand:beam.openPendingChange",
     "onCommand:beam.acceptAllChanges",
     "onCommand:beam.rejectAllChanges",
+    "onCommand:beam.nextProposal",
+    "onCommand:beam.previousProposal",
+    "onCommand:beam.focusActiveProposal",
     "onCommand:beam.analyzeCurrentContext",
     "onCommand:beam.selectCurrentFunction",
     "onCommand:beam.selectCurrentBlock",
@@ -49,7 +52,7 @@
   },
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
+      "secondarySidebar": [
         {
           "id": "beam",
           "title": "%container.title%",
@@ -64,10 +67,6 @@
           "type": "webview",
           "name": "%view.name%",
           "icon": "media/activitybar.svg"
-        },
-        {
-          "id": "beam.pendingChanges",
-          "name": "Pending Changes"
         }
       ]
     },
@@ -164,6 +163,24 @@
         "icon": "$(close-all)"
       },
       {
+        "command": "beam.previousProposal",
+        "title": "查看上一个提议文件",
+        "category": "%command.category%",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "beam.nextProposal",
+        "title": "查看下一个提议文件",
+        "category": "%command.category%",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "beam.focusActiveProposal",
+        "title": "在编辑器中定位当前提议",
+        "category": "%command.category%",
+        "icon": "$(go-to-file)"
+      },
+      {
         "command": "beam.analyzeCurrentContext",
         "title": "%command.analyzeCurrentContext%",
         "category": "%command.category%",
@@ -216,6 +233,12 @@
         "title": "%command.fixCurrentFile%",
         "category": "%command.category%",
         "icon": "$(wrench)"
+      },
+      {
+        "command": "beam.selectionActions",
+        "title": "%command.selectionActions%",
+        "category": "%command.category%",
+        "icon": "$(sparkle)"
       }
     ],
     "menus": {
@@ -237,6 +260,15 @@
         },
         {
           "command": "beam.showLogs"
+        },
+        {
+          "command": "beam.previousProposal"
+        },
+        {
+          "command": "beam.nextProposal"
+        },
+        {
+          "command": "beam.focusActiveProposal"
         },
         {
           "command": "beam.acceptProposal"
@@ -275,28 +307,31 @@
           "command": "beam.fixCurrentFile"
         }
       ],
-      "view/title": [
-        {
-          "command": "beam.acceptAllChanges",
-          "when": "view == beam.pendingChanges",
-          "group": "navigation"
-        },
-        {
-          "command": "beam.rejectAllChanges",
-          "when": "view == beam.pendingChanges",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
+      "editor/title": [
         {
           "command": "beam.acceptProposal",
-          "when": "view == beam.pendingChanges && viewItem == pendingChange",
-          "group": "inline"
+          "when": "resourceScheme == beam-proposal",
+          "group": "navigation"
         },
         {
           "command": "beam.rejectProposal",
-          "when": "view == beam.pendingChanges && viewItem == pendingChange",
-          "group": "inline"
+          "when": "resourceScheme == beam-proposal",
+          "group": "navigation"
+        },
+        {
+          "command": "beam.previousProposal",
+          "when": "resourceScheme == beam-proposal",
+          "group": "navigation"
+        },
+        {
+          "command": "beam.nextProposal",
+          "when": "resourceScheme == beam-proposal",
+          "group": "navigation"
+        },
+        {
+          "command": "beam.focusActiveProposal",
+          "when": "resourceScheme == beam-proposal",
+          "group": "navigation"
         }
       ]
     },

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { getPreferredCodeEditor } from './editorContext';
+import { getEditorLabel, getPreferredCodeEditor } from './editorContext';
 import { InlineDiffDecorator } from './inlineDiffDecorator';
 
 const PROPOSAL_SCHEME = 'beam-proposal';
@@ -12,14 +12,37 @@ const PROPOSAL_SCHEME = 'beam-proposal';
 export interface IBeamProposalState {
 	readonly active: boolean;
 	readonly targetLabel?: string;
-	readonly mode?: 'replace' | 'insert';
+	readonly mode?: 'replace' | 'insert' | 'file';
 	readonly reopenable?: boolean;
+	readonly currentIndex?: number;
+	readonly total?: number;
+	readonly files?: readonly IBeamProposalFileSummary[];
+	readonly hasMultipleFiles?: boolean;
+}
+
+export interface IBeamProposalFileSummary {
+	readonly id: string;
+	readonly uri: vscode.Uri;
+	readonly label: string;
+	readonly mode: 'replace' | 'insert' | 'file';
+	readonly isActive: boolean;
+}
+
+export interface IBeamActiveProposal {
+	readonly id: string;
+	readonly originalUri: vscode.Uri;
+	readonly firstChangeLine: number;
+	readonly currentIndex: number;
+	readonly total: number;
 }
 
 export interface IPendingProposalChange {
+	readonly id: string;
 	readonly uri: vscode.Uri;
 	readonly label: string;
+	readonly mode: 'replace' | 'insert' | 'file';
 	readonly status: 'pending';
+	readonly isActive: boolean;
 }
 
 interface IBeamProposal {
@@ -28,7 +51,8 @@ interface IBeamProposal {
 	readonly targetLabel: string;
 	readonly originalText: string;
 	readonly proposedText: string;
-	readonly mode: 'replace' | 'insert';
+	readonly mode: 'replace' | 'insert' | 'file';
+	readonly isNewFile: boolean;
 	readonly selection?: vscode.Range;
 	readonly firstChangeLine?: number;
 }
@@ -41,6 +65,7 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 	readonly onDidChangeState = this._onDidChangeState.event;
 
 	private readonly proposals = new Map<string, IBeamProposal>();
+	private readonly proposalOrder: string[] = [];
 	private activeProposalId: string | undefined;
 	private readonly providerRegistration: vscode.Disposable;
 	private readonly inlineDiffDecorator: InlineDiffDecorator;
@@ -58,44 +83,88 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 	}
 
 	getState(): IBeamProposalState {
-		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+		const proposal = this.getActiveProposalEntry();
+		const currentIndex = proposal ? this.proposalOrder.indexOf(proposal.id) : -1;
 		return {
 			active: Boolean(proposal),
 			targetLabel: proposal?.targetLabel,
 			mode: proposal?.mode,
-			reopenable: Boolean(proposal)
+			reopenable: Boolean(proposal),
+			currentIndex: currentIndex >= 0 ? currentIndex + 1 : undefined,
+			total: this.proposalOrder.length || undefined,
+			hasMultipleFiles: this.proposalOrder.length > 1,
+			files: this.proposalOrder.map(id => {
+				const item = this.proposals.get(id)!;
+				return {
+					id,
+					uri: item.originalUri,
+					label: item.targetLabel,
+					mode: item.mode,
+					isActive: id === this.activeProposalId
+				};
+			})
 		};
 	}
 
-	getActiveProposal(): { originalUri: vscode.Uri; firstChangeLine: number } | undefined {
-		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+	getActiveProposal(): IBeamActiveProposal | undefined {
+		const proposal = this.getActiveProposalEntry();
 		if (!proposal) {
 			return undefined;
 		}
 
 		return {
+			id: proposal.id,
 			originalUri: proposal.originalUri,
-			firstChangeLine: proposal.firstChangeLine ?? 0
+			firstChangeLine: proposal.firstChangeLine ?? 0,
+			currentIndex: this.proposalOrder.indexOf(proposal.id) + 1,
+			total: this.proposalOrder.length
 		};
 	}
 
 	getPendingChanges(): readonly IPendingProposalChange[] {
-		return Array.from(this.proposals.values()).map(proposal => ({
-			uri: proposal.originalUri,
-			label: proposal.targetLabel,
-			status: 'pending' as const
-		}));
+		return this.proposalOrder.flatMap(id => {
+			const proposal = this.proposals.get(id);
+			if (!proposal) {
+				return [];
+			}
+
+			return [{
+				id,
+				uri: proposal.originalUri,
+				label: proposal.targetLabel,
+				mode: proposal.mode,
+				status: 'pending' as const,
+				isActive: id === this.activeProposalId
+			}];
+		});
 	}
 
-	async openPendingChange(uri: vscode.Uri): Promise<void> {
-		const proposal = Array.from(this.proposals.values()).find(p => p.originalUri.toString() === uri.toString());
+	async openPendingChange(target: vscode.Uri | string): Promise<void> {
+		const proposal = this.findProposalByTarget(target);
 		if (!proposal) {
 			return;
 		}
 
-		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
-		const editor = await vscode.window.showTextDocument(document, { preview: false });
-		this.inlineDiffDecorator.showInlineDiff(editor, proposal.originalText, proposal.proposedText);
+		this.activeProposalId = proposal.id;
+		await this.showProposal(proposal, { preferDiff: true });
+		this.fireState();
+	}
+
+	async focusActiveProposalInEditor(): Promise<void> {
+		const proposal = this.getActiveProposalEntry();
+		if (!proposal) {
+			return;
+		}
+
+		await this.showProposal(proposal, { preferDiff: false });
+	}
+
+	async showNextProposal(): Promise<void> {
+		await this.showProposalByOffset(1);
+	}
+
+	async showPreviousProposal(): Promise<void> {
+		await this.showProposalByOffset(-1);
 	}
 
 	reset(): void {
@@ -103,7 +172,9 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			return;
 		}
 
+		this.clearAllInlineDecorations();
 		this.proposals.clear();
+		this.proposalOrder.length = 0;
 		this.activeProposalId = undefined;
 		this.fireState();
 	}
@@ -111,12 +182,12 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 	async createProposalFromCodeBlock(code: string, mode: 'replace' | 'insert'): Promise<void> {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('\u8bf7\u5148\u6253\u5f00\u4e00\u4e2a\u6587\u672c\u7f16\u8f91\u5668\uff0c\u518d\u521b\u5efa Beam \u7684\u7f16\u8f91\u63d0\u8bae\u3002'));
+			void vscode.window.showInformationMessage(vscode.l10n.t('请先打开一个文本编辑器，再创建 Beam 的编辑提议。'));
 			return;
 		}
 
 		if (mode === 'replace' && editor.selections.every(selection => selection.isEmpty)) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('\u8bf7\u5148\u9009\u4e2d\u8981\u66ff\u6362\u7684\u6587\u672c\uff0c\u518d\u521b\u5efa\u7f16\u8f91\u63d0\u8bae\u3002'));
+			void vscode.window.showInformationMessage(vscode.l10n.t('请先选中要替换的文本，再创建编辑提议。'));
 			return;
 		}
 
@@ -124,48 +195,189 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		const originalUri = editor.document.uri;
 		const originalText = editor.document.getText();
 		const proposedText = applyProposalText(editor, code, mode);
-		const diffRange = this.inlineDiffDecorator.showInlineDiff(editor, originalText, proposedText);
-		const proposalId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		const targetLabel = vscode.workspace.asRelativePath(originalUri, false) || originalUri.fsPath || originalUri.toString();
-
-		this.proposals.set(proposalId, {
-			id: proposalId,
+		await this.upsertProposal({
 			originalUri,
-			targetLabel,
+			targetLabel: getEditorLabel(originalUri),
 			originalText,
 			proposedText,
 			mode,
-			selection,
-			firstChangeLine: diffRange.firstChangeLine
-		});
-		this.activeProposalId = proposalId;
-		this.fireState();
+			isNewFile: false,
+			selection
+		}, { openDiff: true, preserveFocus: false });
+	}
 
-		const proposalUri = this.getProposalUri(proposalId, originalUri);
-		this._onDidChange.fire(proposalUri);
-		this.log(vscode.l10n.t('\u5df2\u5728\u7f16\u8f91\u5668\u4e2d\u663e\u793a {0} \u7684\u63d0\u8bae\u9884\u89c8\u3002', targetLabel));
+	async createFileProposal(uri: vscode.Uri, proposedText: string, mode: 'replace' | 'insert' | 'file' = 'file'): Promise<void> {
+		const { text: originalText, exists } = await this.readUriText(uri);
+		await this.upsertProposal({
+			originalUri: uri,
+			targetLabel: getEditorLabel(uri),
+			originalText,
+			proposedText,
+			mode,
+			isNewFile: !exists
+		}, { openDiff: false, preserveFocus: true });
 	}
 
 	async acceptActiveProposal(): Promise<void> {
-		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+		const proposal = this.getActiveProposalEntry();
 		if (!proposal) {
 			return;
 		}
 
-		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
-		const editor = await vscode.window.showTextDocument(document, { preview: false });
-		this.inlineDiffDecorator.clearDecorations(editor);
-		const fullRange = fullDocumentRange(document);
-		await editor.edit(editBuilder => {
-			editBuilder.replace(fullRange, proposal.proposedText);
-		});
-
-		this.log(vscode.l10n.t('\u5df2\u63a5\u53d7 {0} \u7684\u7f16\u8f91\u63d0\u8bae\u3002', proposal.targetLabel));
-		this.clearActiveProposal();
+		await this.applyProposal(proposal);
+		this.log(vscode.l10n.t('已接受 {0} 的编辑提议。', proposal.targetLabel));
+		await this.removeProposal(proposal.id, true);
 	}
 
 	rejectActiveProposal(): void {
-		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+		const proposal = this.getActiveProposalEntry();
+		if (!proposal) {
+			return;
+		}
+
+		this.log(vscode.l10n.t('已拒绝 {0} 的编辑提议。', proposal.targetLabel));
+		void this.removeProposal(proposal.id, false);
+	}
+
+	async reopenActiveProposal(): Promise<void> {
+		const proposal = this.getActiveProposalEntry();
+		if (!proposal) {
+			return;
+		}
+
+		await this.showProposal(proposal, { preferDiff: true });
+	}
+
+	provideTextDocumentContent(uri: vscode.Uri): string {
+		const id = uri.path.replace(/^\//, '');
+		return this.proposals.get(id)?.proposedText ?? '';
+	}
+
+	private async showProposalByOffset(offset: number): Promise<void> {
+		const proposal = this.getActiveProposalEntry();
+		if (!proposal || this.proposalOrder.length < 2) {
+			return;
+		}
+
+		const currentIndex = this.proposalOrder.indexOf(proposal.id);
+		if (currentIndex < 0) {
+			return;
+		}
+
+		const nextIndex = (currentIndex + offset + this.proposalOrder.length) % this.proposalOrder.length;
+		const nextProposal = this.proposals.get(this.proposalOrder[nextIndex]);
+		if (!nextProposal) {
+			return;
+		}
+
+		this.activeProposalId = nextProposal.id;
+		await this.showProposal(nextProposal, { preferDiff: true });
+		this.fireState();
+	}
+
+	private async upsertProposal(
+		value: Omit<IBeamProposal, 'id' | 'firstChangeLine'>,
+		options: { openDiff: boolean; preserveFocus: boolean }
+	): Promise<void> {
+		const existing = Array.from(this.proposals.values()).find(item => item.originalUri.toString() === value.originalUri.toString());
+		const nextId = existing?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+		const proposal: IBeamProposal = {
+			...value,
+			id: nextId,
+			firstChangeLine: existing?.firstChangeLine
+		};
+
+		this.proposals.set(nextId, proposal);
+		if (!existing) {
+			this.proposalOrder.push(nextId);
+		}
+		this.activeProposalId = nextId;
+
+		const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === value.originalUri.toString());
+		if (activeEditor) {
+			const diffRange = this.inlineDiffDecorator.showInlineDiff(activeEditor, value.originalText, value.proposedText);
+			this.proposals.set(nextId, {
+				...proposal,
+				firstChangeLine: diffRange.firstChangeLine
+			});
+		}
+
+		await this.showProposal(this.proposals.get(nextId)!, {
+			preferDiff: options.openDiff,
+			preserveFocus: options.preserveFocus
+		});
+		this.log(vscode.l10n.t('已在编辑器中显示 {0} 的提议预览。', value.targetLabel));
+		this.fireState();
+	}
+
+	private async showProposal(
+		proposal: IBeamProposal,
+		options: { preferDiff: boolean; preserveFocus?: boolean }
+	): Promise<void> {
+		const proposalUri = this.getProposalUri(proposal.id);
+		this._onDidChange.fire(proposalUri);
+
+		if (options.preferDiff) {
+			const originalUri = proposal.isNewFile
+				? this.getUntitledPreviewUri(proposal.originalUri)
+				: proposal.originalUri;
+			await vscode.workspace.openTextDocument(originalUri);
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				originalUri,
+				proposalUri,
+				this.getDiffTitle(proposal),
+				{ preview: false, preserveFocus: Boolean(options.preserveFocus) }
+			);
+			return;
+		}
+
+		if (proposal.isNewFile) {
+			const document = await vscode.workspace.openTextDocument(proposalUri);
+			await vscode.window.showTextDocument(document, {
+				preview: false,
+				preserveFocus: Boolean(options.preserveFocus)
+			});
+			return;
+		}
+
+		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
+		const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: Boolean(options.preserveFocus) });
+		const diffRange = this.inlineDiffDecorator.showInlineDiff(editor, proposal.originalText, proposal.proposedText);
+		this.proposals.set(proposal.id, {
+			...proposal,
+			firstChangeLine: diffRange.firstChangeLine
+		});
+		if (diffRange.hasChanges) {
+			const line = Math.min(diffRange.firstChangeLine, document.lineCount - 1);
+			const range = document.lineAt(Math.max(0, line)).range;
+			editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+		}
+	}
+
+	private async applyProposal(proposal: IBeamProposal): Promise<void> {
+		if (proposal.isNewFile && !await this.uriExists(proposal.originalUri)) {
+			const edit = new vscode.WorkspaceEdit();
+			edit.createFile(proposal.originalUri, { ignoreIfExists: true });
+			edit.insert(proposal.originalUri, new vscode.Position(0, 0), proposal.proposedText);
+			await vscode.workspace.applyEdit(edit);
+			return;
+		}
+
+		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
+		const fullRange = fullDocumentRange(document);
+		const edit = new vscode.WorkspaceEdit();
+		edit.replace(proposal.originalUri, fullRange, proposal.proposedText);
+		await vscode.workspace.applyEdit(edit);
+
+		const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === proposal.originalUri.toString());
+		if (activeEditor) {
+			this.inlineDiffDecorator.clearDecorations(activeEditor);
+		}
+	}
+
+	private async removeProposal(id: string, revealNext: boolean): Promise<void> {
+		const proposal = this.proposals.get(id);
 		if (!proposal) {
 			return;
 		}
@@ -175,52 +387,94 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			this.inlineDiffDecorator.clearDecorations(activeEditor);
 		}
 
-		this.log(vscode.l10n.t('\u5df2\u62d2\u7edd {0} \u7684\u7f16\u8f91\u63d0\u8bae\u3002', proposal.targetLabel));
-		this.clearActiveProposal();
-	}
+		this.proposals.delete(id);
+		const index = this.proposalOrder.indexOf(id);
+		if (index >= 0) {
+			this.proposalOrder.splice(index, 1);
+		}
 
-	async reopenActiveProposal(): Promise<void> {
-		const proposal = this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
-		if (!proposal) {
+		if (!this.proposalOrder.length) {
+			this.activeProposalId = undefined;
+			this.fireState();
 			return;
 		}
 
-		const proposalUri = this.getProposalUri(proposal.id, proposal.originalUri);
-		this._onDidChange.fire(proposalUri);
-		await vscode.commands.executeCommand(
-			'vscode.diff',
-			proposal.originalUri,
-			proposalUri,
-			vscode.l10n.t('Beam \u63d0\u8bae\uff1a{0}', proposal.targetLabel),
-			{ preview: true, preserveFocus: false }
-		);
-	}
-
-	provideTextDocumentContent(uri: vscode.Uri): string {
-		const id = uri.path.replace(/^\//, '');
-		return this.proposals.get(id)?.proposedText ?? '';
-	}
-
-	private clearActiveProposal(): void {
-		if (this.activeProposalId) {
-			this.proposals.delete(this.activeProposalId);
-			this.activeProposalId = undefined;
-			this.fireState();
+		const nextIndex = Math.min(index, this.proposalOrder.length - 1);
+		this.activeProposalId = this.proposalOrder[nextIndex];
+		const nextProposal = this.getActiveProposalEntry();
+		if (revealNext && nextProposal) {
+			await this.showProposal(nextProposal, { preferDiff: true });
 		}
+		this.fireState();
 	}
 
-	private getProposalUri(id: string, originalUri: vscode.Uri): vscode.Uri {
+	private getActiveProposalEntry(): IBeamProposal | undefined {
+		return this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
+	}
+
+	private getProposalUri(id: string): vscode.Uri {
 		return vscode.Uri.from({
 			scheme: PROPOSAL_SCHEME,
-			path: `/${id}`,
-			query: new URLSearchParams({
-				original: originalUri.toString()
-			}).toString()
+			path: `/${id}`
 		});
+	}
+
+	private getUntitledPreviewUri(uri: vscode.Uri): vscode.Uri {
+		return vscode.Uri.from({
+			scheme: 'untitled',
+			path: uri.path
+		});
+	}
+
+	private getDiffTitle(proposal: IBeamProposal): string {
+		const index = this.proposalOrder.indexOf(proposal.id);
+		if (this.proposalOrder.length <= 1 || index < 0) {
+			return vscode.l10n.t('Beam 提议：{0}', proposal.targetLabel);
+		}
+
+		return vscode.l10n.t('Beam 提议：{0} ({1}/{2})', proposal.targetLabel, index + 1, this.proposalOrder.length);
+	}
+
+	private findProposalByTarget(target: vscode.Uri | string): IBeamProposal | undefined {
+		if (typeof target === 'string') {
+			return this.proposals.get(target);
+		}
+
+		return Array.from(this.proposals.values()).find(item => item.originalUri.toString() === target.toString());
+	}
+
+	private clearAllInlineDecorations(): void {
+		for (const editor of vscode.window.visibleTextEditors) {
+			this.inlineDiffDecorator.clearDecorations(editor);
+		}
 	}
 
 	private fireState(): void {
 		this._onDidChangeState.fire(this.getState());
+	}
+
+	private async readUriText(uri: vscode.Uri): Promise<{ text: string; exists: boolean }> {
+		try {
+			const document = await vscode.workspace.openTextDocument(uri);
+			return {
+				text: document.getText(),
+				exists: true
+			};
+		} catch {
+			return {
+				text: '',
+				exists: false
+			};
+		}
+	}
+
+	private async uriExists(uri: vscode.Uri): Promise<boolean> {
+		try {
+			await vscode.workspace.fs.stat(uri);
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	private log(message: string): void {

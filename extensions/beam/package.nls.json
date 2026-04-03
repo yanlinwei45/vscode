@@ -24,6 +24,7 @@
 	"command.addSelectionToChat": "将选区添加到 Assistant",
 	"command.editSelection": "修改当前选区",
 	"command.explainSelection": "解释当前选区",
+	"command.selectionActions": "对当前选区执行 Beam 操作",
 	"command.fixCurrentFile": "修复当前文件",
 	"config.systemPrompt.description": "发送给 Beam 的基础系统提示词。",
 	"config.model.description": "发送到兼容 Anthropic 接口时默认使用的模型标识。",
