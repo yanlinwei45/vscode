@@ -209,8 +209,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const send = vscode.l10n.t('\u53d1\u9001');
 		const stop = vscode.l10n.t('\u505c\u6b62');
 		const attachLabel = vscode.l10n.t('\u4e0a\u4f20');
-		const previewInsertLabel = vscode.l10n.t('\u9884\u89c8\u63d2\u5165');
-		const previewReplaceLabel = vscode.l10n.t('\u9884\u89c8\u66ff\u6362');
 		const proposalTitle = vscode.l10n.t('\u7f16\u8f91\u63d0\u6848');
 		const proposalFilesLabel = vscode.l10n.t('\u5f85\u786e\u8ba4\u6587\u4ef6');
 		const acceptLabel = vscode.l10n.t('\u63a5\u53d7');
@@ -420,13 +418,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		.content code {
 			font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
 			font-size: 13px;
-		}
-		.code-actions {
-			display: flex;
-			justify-content: flex-end;
-			flex-wrap: wrap;
-			gap: 8px;
-			margin-top: 8px;
 		}
 		.tool-line {
 			display: flex;
@@ -893,8 +884,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const focusProposalEl = document.getElementById('focusProposal');
 		const acceptProposalEl = document.getElementById('acceptProposal');
 		const rejectProposalEl = document.getElementById('rejectProposal');
-		const previewInsertCommand = 'beam.previewInsertCodeBlock';
-		const previewReplaceCommand = 'beam.previewReplaceSelectionWithCodeBlock';
 		const toolLabels = {
 			get_active_editor_context: ${JSON.stringify(vscode.l10n.t('\u8bfb\u53d6\u5f53\u524d\u4e0a\u4e0b\u6587'))},
 			read_file: ${JSON.stringify(vscode.l10n.t('\u8bfb\u53d6\u6587\u4ef6'))},
@@ -1045,30 +1034,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			focusComposer();
 		}
 
-		function createCodeActions(code) {
-			const actions = document.createElement('div');
-			actions.className = 'code-actions';
-
-			const previewInsert = document.createElement('button');
-			previewInsert.className = 'secondary';
-			previewInsert.textContent = ${JSON.stringify(previewInsertLabel)};
-			previewInsert.addEventListener('click', () => {
-				vscode.postMessage({ type: 'command', command: previewInsertCommand, args: [code] });
-			});
-			actions.appendChild(previewInsert);
-
-			const previewReplace = document.createElement('button');
-			previewReplace.className = 'secondary';
-			previewReplace.textContent = ${JSON.stringify(previewReplaceLabel)};
-			previewReplace.addEventListener('click', () => {
-				vscode.postMessage({ type: 'command', command: previewReplaceCommand, args: [code] });
-			});
-			actions.appendChild(previewReplace);
-
-			return actions;
-		}
-
-		function renderContent(container, text, includeCodeActions) {
+		function renderContent(container, text) {
 			const fence = String.fromCharCode(96, 96, 96);
 			const parts = String(text || '').split(fence);
 			for (let index = 0; index < parts.length; index++) {
@@ -1086,9 +1052,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					code.textContent = body;
 					pre.appendChild(code);
 					container.appendChild(pre);
-					if (includeCodeActions && body) {
-						container.appendChild(createCodeActions(body));
-					}
 					continue;
 				}
 
@@ -1185,7 +1148,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 				const body = document.createElement('div');
 				body.className = 'content';
-				renderContent(body, message.content, false);
+				renderContent(body, message.content);
 				item.appendChild(body);
 				details.appendChild(item);
 			}
@@ -1420,7 +1383,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 				const content = document.createElement('div');
 				content.className = 'content';
-				renderContent(content, message.content, message.role === 'assistant');
+				renderContent(content, message.content);
 				item.appendChild(content);
 
 				messagesEl.appendChild(item);

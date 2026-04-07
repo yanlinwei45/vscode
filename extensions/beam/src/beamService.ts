@@ -424,14 +424,16 @@ export class BeamService extends vscode.Disposable {
 				'anthropic-beta': anthropicBeta ?? '',
 				'x-api-key': apiKey ?? '',
 				'authorization': authToken ? `Bearer ${authToken}` : ''
-			}, body);
+			}, body, token);
 			this.log(vscode.l10n.t('Beam \u5df2\u6536\u5230\u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
+			this.throwIfCancelled(token);
 
 			const blocks = response.body.content ?? [];
 			const assistantText = extractAnthropicResponseText(response.body).trim();
 			const toolUses = extractAnthropicToolUses(blocks);
 
 			if (!toolUses.length) {
+				this.throwIfCancelled(token);
 				if (!assistantText) {
 					throw new Error(response.body.error?.message || vscode.l10n.t('Beam \u8fd4\u56de\u4e86\u7a7a\u54cd\u5e94\u3002'));
 				}
@@ -507,14 +509,16 @@ export class BeamService extends vscode.Disposable {
 			const response = await postJson<IOpenAIChatCompletionsResponse>(endpoint, {
 				'content-type': 'application/json',
 				'authorization': `Bearer ${apiKey}`
-			}, body);
+			}, body, token);
 			this.log(vscode.l10n.t('Beam \u5df2\u6536\u5230 OpenAI \u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
+			this.throwIfCancelled(token);
 
 			const message = response.body.choices?.[0]?.message;
 			const assistantText = extractOpenAIChatCompletionText(message).trim();
 			const toolUses = extractOpenAIChatCompletionToolUses(message);
 
 			if (!toolUses.length) {
+				this.throwIfCancelled(token);
 				if (!assistantText) {
 					throw new Error(response.body.error?.message || vscode.l10n.t('Beam \u8fd4\u56de\u4e86\u7a7a\u54cd\u5e94\u3002'));
 				}
@@ -673,6 +677,7 @@ export class BeamService extends vscode.Disposable {
 				message: vscode.l10n.t('\u6b63\u5728\u6267\u884c\uff1a{0} ({1}/{2})', toolUse.name, index + 1, toolUses.length)
 			});
 			const result = await this.toolService.invoke(toolUse.name, toolUse.input);
+			this.throwIfCancelled(token);
 			const content = result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
 			this.messages = [...this.messages, { role: 'tool', content, metadata: { toolName: result.toolName } }];
 			this.pendingToolNames = pendingToolNames.slice(index + 1);
@@ -1020,7 +1025,7 @@ function truncateTextValue(value: string, maxLength: number): string {
 	return `${value.slice(0, Math.max(0, maxLength - 8))} ...`;
 }
 
-function postJson<T>(urlString: string, headers: Record<string, string>, body: unknown): Promise<IJsonResponse<T>> {
+function postJson<T>(urlString: string, headers: Record<string, string>, body: unknown, token?: vscode.CancellationToken): Promise<IJsonResponse<T>> {
 	return new Promise((resolve, reject) => {
 		const url = new URL(urlString);
 		const payload = JSON.stringify(body);
@@ -1036,18 +1041,67 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 		}
 
 		const transport = url.protocol === 'http:' ? http : https;
-		const request = transport.request(url, {
+		let settled = false;
+		let responseStream: http.IncomingMessage | undefined;
+		let request: http.ClientRequest;
+		let cancellationDisposable: vscode.Disposable | undefined;
+
+		const cleanup = () => {
+			cancellationDisposable?.dispose();
+			cancellationDisposable = undefined;
+		};
+
+		const resolveOnce = (value: IJsonResponse<T>) => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			cleanup();
+			resolve(value);
+		};
+
+		const rejectOnce = (error: Error) => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			cleanup();
+			reject(error);
+		};
+
+		const cancelRequest = () => {
+			const error = createRequestCancelledError();
+			rejectOnce(error);
+			responseStream?.destroy(error);
+			request.destroy(error);
+		};
+
+		request = transport.request(url, {
 			method: 'POST',
 			headers: requestHeaders
 		}, response => {
+			responseStream = response;
 			const chunks: Buffer[] = [];
 			response.on('data', chunk => {
+				if (settled) {
+					return;
+				}
+
 				chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 			});
+			response.on('error', error => {
+				rejectOnce(error instanceof Error ? error : new Error(String(error)));
+			});
 			response.on('end', () => {
+				if (settled) {
+					return;
+				}
+
 				const text = Buffer.concat(chunks).toString('utf8');
 				if (!text) {
-					reject(new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
+					rejectOnce(new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
 					return;
 				}
 
@@ -1055,28 +1109,45 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 					const parsed = JSON.parse(text) as T;
 					if ((response.statusCode ?? 500) >= 400) {
 						const errorMessage = getResponseErrorMessage(parsed);
-						reject(new Error(errorMessage || vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
+						rejectOnce(new Error(errorMessage || vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
 						return;
 					}
 
-					resolve({
+					resolveOnce({
 						statusCode: response.statusCode ?? 200,
 						body: parsed
 					});
 				} catch (error) {
 					const preview = text.replace(/\s+/g, ' ').slice(0, 180);
-					reject(new Error(vscode.l10n.t('Beam 请求返回了非 JSON 响应，状态码：{0}，内容开头：{1}', response.statusCode ?? 0, preview)));
+					rejectOnce(new Error(vscode.l10n.t('Beam 请求返回了非 JSON 响应，状态码：{0}，内容开头：{1}', response.statusCode ?? 0, preview)));
 				}
 			});
 		});
 
-		request.on('error', reject);
+		cancellationDisposable = token?.onCancellationRequested(() => {
+			cancelRequest();
+		});
+		if (token?.isCancellationRequested) {
+			cancelRequest();
+			return;
+		}
+
+		request.on('error', error => {
+			rejectOnce(error instanceof Error ? error : new Error(String(error)));
+		});
 		request.setTimeout(REQUEST_TIMEOUT_MS, () => {
-			request.destroy(new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u8d85\u65f6\uff0c\u5df2\u7b49\u5f85 {0} \u79d2\u3002', Math.floor(REQUEST_TIMEOUT_MS / 1000))));
+			const error = new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u8d85\u65f6\uff0c\u5df2\u7b49\u5f85 {0} \u79d2\u3002', Math.floor(REQUEST_TIMEOUT_MS / 1000)));
+			rejectOnce(error);
+			responseStream?.destroy(error);
+			request.destroy(error);
 		});
 		request.write(payload);
 		request.end();
 	});
+}
+
+function createRequestCancelledError(): Error {
+	return new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5df2\u53d6\u6d88\u3002'));
 }
 
 function getResponseErrorMessage(value: unknown): string | undefined {
