@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { isReadOnlyCommand, isSafeCommand } from './commandPolicy';
 import { BeamContextService } from './contextService';
 import { getEditorLabel, getPreferredCodeEditor, revealEditorRange, selectCurrentBlock, selectCurrentFunction, setEditorRangeSelection } from './editorContext';
 import { BeamProposalService } from './proposalService';
@@ -14,7 +15,6 @@ const MAX_SEARCH_FILE_SCAN = 100;
 const MAX_DIRECTORY_ENTRIES = 50;
 const MAX_COMMAND_OUTPUT = 4000;
 const COMMAND_TIMEOUT_MS = 120000;
-const SAFE_COMMAND_PATTERN = /^[\w./:@%+=, -]+$/;
 
 export interface IBeamToolDefinition {
 	readonly name: string;
@@ -202,11 +202,11 @@ export class BeamToolService {
 			},
 			{
 				name: 'run_command',
-				description: '\u5728\u96c6\u6210\u7ec8\u7aef\u4e2d\u8fd0\u884c\u5b89\u5168\u7684 shell \u547d\u4ee4\uff0c\u5e76\u8fd4\u56de\u8f93\u51fa\u6458\u8981\u3002',
+				description: '\u5728\u96c6\u6210\u7ec8\u7aef\u4e2d\u8fd0\u884c\u53ea\u8bfb\u7684 shell \u547d\u4ee4\uff0c\u5e76\u8fd4\u56de\u8f93\u51fa\u6458\u8981\u3002\u4e0d\u5141\u8bb8\u4efb\u4f55\u4f1a\u4fee\u6539\u6587\u4ef6\u6216\u5de5\u4f5c\u533a\u72b6\u6001\u7684\u547d\u4ee4\u3002',
 				input_schema: {
 					type: 'object',
 					properties: {
-						command: { type: 'string', description: '\u8981\u8fd0\u884c\u7684\u4e00\u6761\u5b89\u5168\u547d\u4ee4\uff0c\u4e0d\u80fd\u5305\u542b\u7ba1\u9053\u3001\u94fe\u5f0f\u6267\u884c\u3001\u91cd\u5b9a\u5411\u6216\u5b50 shell\u3002' },
+						command: { type: 'string', description: '\u8981\u8fd0\u884c\u7684\u4e00\u6761\u53ea\u8bfb\u547d\u4ee4\uff0c\u4e0d\u80fd\u5305\u542b\u7ba1\u9053\u3001\u94fe\u5f0f\u6267\u884c\u3001\u91cd\u5b9a\u5411\u3001\u5b50 shell \u6216\u4efb\u4f55\u5199\u5165\u64cd\u4f5c\u3002' },
 						cwd: { type: 'string', description: '\u53ef\u9009\u7684\u5de5\u4f5c\u533a\u76f8\u5bf9\u5de5\u4f5c\u76ee\u5f55\u3002' }
 					},
 					required: ['command']
@@ -422,7 +422,11 @@ export class BeamToolService {
 	private async runCommand(input: Record<string, unknown>): Promise<string> {
 		const commandLine = asString(input.command, 'command').trim();
 		if (!isSafeCommand(commandLine)) {
-			throw new Error(vscode.l10n.t('\u547d\u4ee4\u5305\u542b\u4e0d\u652f\u6301\u7684 shell \u63a7\u5236\u5b57\u7b26\u3002\u53ea\u80fd\u8fd0\u884c\u5355\u6761\u5b89\u5168\u547d\u4ee4\u3002'));
+			throw new Error(vscode.l10n.t('\u547d\u4ee4\u5305\u542b\u4e0d\u652f\u6301\u7684 shell \u63a7\u5236\u5b57\u7b26\u3002\u53ea\u80fd\u8fd0\u884c\u5355\u6761\u53ea\u8bfb\u547d\u4ee4\u3002'));
+		}
+
+		if (!isReadOnlyCommand(commandLine)) {
+			throw new Error(vscode.l10n.t('\u53ea\u5141\u8bb8\u8fd0\u884c\u8bfb\u53d6\u3001\u641c\u7d22\u6216 git \u67e5\u770b\u7c7b\u547d\u4ee4\u3002\u4efb\u4f55\u4f1a\u4fee\u6539\u6587\u4ef6\u7684\u64cd\u4f5c\u90fd\u5fc5\u987b\u901a\u8fc7 Beam \u7684\u7f16\u8f91\u63d0\u8bae\u6d41\u7a0b\u3002'));
 		}
 
 		const cwdUri = this.resolveWorkspaceFolderCwd(asOptionalString(input.cwd));
@@ -606,10 +610,6 @@ function formatSeverity(severity: vscode.DiagnosticSeverity): string {
 
 function formatRange(range: vscode.Range): string {
 	return `${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1}`;
-}
-
-function isSafeCommand(value: string): boolean {
-	return SAFE_COMMAND_PATTERN.test(value) && !/[|&;<>`$(){}[\]\\]/.test(value);
 }
 
 function stripAnsi(value: string): string {

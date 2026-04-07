@@ -36,15 +36,6 @@ export interface IBeamActiveProposal {
 	readonly total: number;
 }
 
-export interface IPendingProposalChange {
-	readonly id: string;
-	readonly uri: vscode.Uri;
-	readonly label: string;
-	readonly mode: 'replace' | 'insert' | 'file';
-	readonly status: 'pending';
-	readonly isActive: boolean;
-}
-
 interface IBeamProposal {
 	readonly id: string;
 	readonly originalUri: vscode.Uri;
@@ -121,24 +112,6 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		};
 	}
 
-	getPendingChanges(): readonly IPendingProposalChange[] {
-		return this.proposalOrder.flatMap(id => {
-			const proposal = this.proposals.get(id);
-			if (!proposal) {
-				return [];
-			}
-
-			return [{
-				id,
-				uri: proposal.originalUri,
-				label: proposal.targetLabel,
-				mode: proposal.mode,
-				status: 'pending' as const,
-				isActive: id === this.activeProposalId
-			}];
-		});
-	}
-
 	async openPendingChange(target: vscode.Uri | string): Promise<void> {
 		const proposal = this.findProposalByTarget(target);
 		if (!proposal) {
@@ -206,7 +179,12 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}, { openDiff: true, preserveFocus: false });
 	}
 
-	async createFileProposal(uri: vscode.Uri, proposedText: string, mode: 'replace' | 'insert' | 'file' = 'file'): Promise<void> {
+	async createFileProposal(
+		uri: vscode.Uri,
+		proposedText: string,
+		mode: 'replace' | 'insert' | 'file' = 'file',
+		options: { openDiff?: boolean; preserveFocus?: boolean } = {}
+	): Promise<void> {
 		const { text: originalText, exists } = await this.readUriText(uri);
 		await this.upsertProposal({
 			originalUri: uri,
@@ -215,7 +193,10 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			proposedText,
 			mode,
 			isNewFile: !exists
-		}, { openDiff: false, preserveFocus: true });
+		}, {
+			openDiff: options.openDiff ?? true,
+			preserveFocus: options.preserveFocus ?? true
+		});
 	}
 
 	async acceptActiveProposal(): Promise<void> {

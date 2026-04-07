@@ -192,20 +192,22 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const newChatLabel = vscode.l10n.t('\u65b0\u5efa\u5bf9\u8bdd');
 		const currentChatLabel = vscode.l10n.t('\u5f53\u524d\u5bf9\u8bdd');
 		const historyEmptyLabel = vscode.l10n.t('\u6682\u65e0\u5386\u53f2\u5bf9\u8bdd');
+		const composerHint = vscode.l10n.t('\u56de\u8f66\u53d1\u9001\uff0cShift+Enter \u6362\u884c');
 		return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 	<meta charset="UTF-8">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>${escapeHtml(titleText)}</title>
-	<style>
+	<style nonce="${nonce}">
 		:root {
 			color-scheme: light dark;
 		}
 		body {
 			margin: 0;
 			font-family: var(--vscode-font-family);
+			font-size: 13px;
 			background: var(--vscode-sideBar-background);
 			color: var(--vscode-sideBar-foreground);
 		}
@@ -312,7 +314,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			border-radius: 14px;
 			border: 1px solid var(--vscode-panel-border);
 			line-height: 1.55;
-			font-size: 13px;
+			font-size: 14px;
 			background: color-mix(in srgb, var(--vscode-editor-background) 78%, var(--vscode-sideBar-background));
 			box-shadow: 0 6px 14px rgba(0, 0, 0, 0.05);
 			max-width: calc(100% - 12px);
@@ -369,7 +371,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		}
 		.content code {
 			font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
-			font-size: 12px;
+			font-size: 13px;
 		}
 		.code-actions {
 			display: flex;
@@ -588,6 +590,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			color: var(--vscode-input-foreground);
 			padding: 12px 13px 10px;
 			font: inherit;
+			font-size: 15px;
 			line-height: 1.55;
 			outline: none;
 			overflow-y: hidden;
@@ -602,6 +605,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			gap: 8px;
 			padding: 0 10px 10px;
 		}
+		.composer-meta {
+			display: grid;
+			gap: 4px;
+			min-width: 0;
+		}
 		.composer-status {
 			font-size: 11px;
 			opacity: 0;
@@ -612,6 +620,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		.composer-status.active {
 			opacity: 0.7;
 			transform: translateY(0);
+		}
+		.composer-hint {
+			font-size: 12px;
+			opacity: 0.6;
+			white-space: nowrap;
 		}
 		.composer-shell.flash {
 			border-color: color-mix(in srgb, var(--vscode-button-background) 72%, var(--vscode-input-border, var(--vscode-panel-border)));
@@ -681,7 +694,10 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					<div id="composerAttachments" class="composer-attachments"></div>
 					<textarea id="prompt" placeholder="${escapeHtml(placeholder)}"></textarea>
 					<div class="composer-footer">
-						<div id="composerStatus" class="composer-status"></div>
+						<div class="composer-meta">
+							<div id="composerStatus" class="composer-status"></div>
+							<div class="composer-hint">${escapeHtml(composerHint)}</div>
+						</div>
 						<div class="composer-actions">
 							<button id="send" class="send-button">${escapeHtml(send)}</button>
 						</div>

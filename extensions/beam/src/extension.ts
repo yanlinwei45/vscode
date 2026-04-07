@@ -31,8 +31,6 @@ const REJECT_PROPOSAL_COMMAND = "beam.rejectProposal";
 const REOPEN_PROPOSAL_COMMAND = "beam.reopenProposal";
 const OPEN_PROPOSAL_DIFF_COMMAND = "beam.openProposalDiff";
 const OPEN_PENDING_CHANGE_COMMAND = "beam.openPendingChange";
-const ACCEPT_ALL_CHANGES_COMMAND = "beam.acceptAllChanges";
-const REJECT_ALL_CHANGES_COMMAND = "beam.rejectAllChanges";
 const NEXT_PROPOSAL_COMMAND = "beam.nextProposal";
 const PREVIOUS_PROPOSAL_COMMAND = "beam.previousProposal";
 const FOCUS_ACTIVE_PROPOSAL_COMMAND = "beam.focusActiveProposal";
@@ -275,22 +273,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand(ACCEPT_ALL_CHANGES_COMMAND, async () => {
-			while (proposalService.getActiveProposal()) {
-				await proposalService.acceptActiveProposal();
-			}
-		}),
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand(REJECT_ALL_CHANGES_COMMAND, () => {
-			while (proposalService.getActiveProposal()) {
-				proposalService.rejectActiveProposal();
-			}
-		}),
-	);
-
-	context.subscriptions.push(
 		vscode.commands.registerCommand(
 			ANALYZE_CURRENT_CONTEXT_COMMAND,
 			async () => {
@@ -400,28 +382,28 @@ export function activate(context: vscode.ExtensionContext): void {
 			const choice = await vscode.window.showQuickPick(
 				[
 					{
-						label: vscode.l10n.t('Ask about selection'),
+						label: vscode.l10n.t('询问当前选区'),
 						description: vscode.l10n.t('分析当前选区'),
 						command: ASK_ABOUT_SELECTION_COMMAND,
 					},
 					{
-						label: vscode.l10n.t('Edit selection'),
+						label: vscode.l10n.t('修改当前选区'),
 						description: vscode.l10n.t('修改当前选区'),
 						command: EDIT_SELECTION_COMMAND,
 					},
 					{
-						label: vscode.l10n.t('Explain selection'),
+						label: vscode.l10n.t('解释当前选区'),
 						description: vscode.l10n.t('解释当前选区'),
 						command: EXPLAIN_SELECTION_COMMAND,
 					},
 					{
-						label: vscode.l10n.t('Attach selection to chat'),
+						label: vscode.l10n.t('将选区附加到对话'),
 						description: vscode.l10n.t('仅附加到对话上下文'),
 						command: ADD_SELECTION_TO_CHAT_COMMAND,
 					},
 				],
 				{
-					placeHolder: vscode.l10n.t('Choose what to do with the current selection'),
+					placeHolder: vscode.l10n.t('选择要对当前选区执行的 Beam 操作'),
 				},
 			);
 			if (!choice) {
@@ -580,9 +562,9 @@ class BeamSelectionCodeLensProvider
 	readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 	private readonly localDisposables: vscode.Disposable[] = [];
 	private readonly askBeamDecorationAttachment: IBeamDecorationAttachmentRenderOptions = {
-		contentText: `  ${vscode.l10n.t("Ask Beam Assistant")} / ${vscode.l10n.t("Edit with Beam")}`,
+		contentText: `  ${vscode.l10n.t("询问 Beam")} / ${vscode.l10n.t("让 Beam 修改")}`,
 		fontWeight: '700',
-		fontSize: '13px',
+		fontSize: '14px',
 		color: new vscode.ThemeColor('editorInfo.foreground'),
 		backgroundColor: new vscode.ThemeColor('editorInfo.background'),
 		margin: '0 0 0 12px',
@@ -639,14 +621,14 @@ class BeamSelectionCodeLensProvider
 		const range = new vscode.Range(line, 0, line, 0);
 		return [
 			new vscode.CodeLens(range, {
-				title: `$(sparkle) ${vscode.l10n.t("Ask Beam Assistant")}`,
+				title: `$(sparkle) ${vscode.l10n.t("询问 Beam")}`,
 				command: ASK_ABOUT_SELECTION_COMMAND,
 				tooltip: vscode.l10n.t("带着这段选区直接向 Beam 提问"),
 			}),
 			new vscode.CodeLens(range, {
-				title: `$(edit) ${vscode.l10n.t("Edit with Beam")}`,
+				title: `$(edit) ${vscode.l10n.t("让 Beam 修改")}`,
 				command: EDIT_SELECTION_COMMAND,
-				tooltip: vscode.l10n.t("让 Beam 直接修改当前选区"),
+				tooltip: vscode.l10n.t("让 Beam 为当前选区创建可确认的编辑提议"),
 			}),
 		];
 	}
@@ -682,7 +664,7 @@ class BeamSelectionCodeLensProvider
 		return [
 			{
 				range: new vscode.Range(line, Number.MAX_SAFE_INTEGER, line, Number.MAX_SAFE_INTEGER),
-				hoverMessage: new vscode.MarkdownString(vscode.l10n.t('使用上方的 **Ask Beam Assistant** 或 **Edit with Beam** 操作处理当前选区。')),
+				hoverMessage: new vscode.MarkdownString(vscode.l10n.t('使用上方的 **询问 Beam** 或 **让 Beam 修改** 操作处理当前选区。')),
 			}
 		];
 	}

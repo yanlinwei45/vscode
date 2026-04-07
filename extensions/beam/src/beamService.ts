@@ -6,6 +6,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import * as vscode from 'vscode';
+import { buildSystemPrompt } from './promptPolicy';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
 
 const STORAGE_KEY = 'beam.chatSessions.v2';
@@ -376,7 +377,7 @@ export class BeamService extends vscode.Disposable {
 		const configuration = vscode.workspace.getConfiguration('beam');
 		const configuredBaseUrl = configuration.get<string>('baseUrl')?.trim();
 		const model = configuration.get<string>('model')?.trim() || 'claude-sonnet-4-20250514';
-		const systemPrompt = configuration.get<string>('systemPrompt')?.trim() || vscode.l10n.t('\u4f60\u662f Beam\uff0c\u4e00\u4e2a\u5728 VS Code \u4e2d\u5de5\u4f5c\u7684\u8d44\u6df1\u7f16\u7801\u52a9\u624b\u3002\u8bf7\u4fdd\u6301\u7b80\u6d01\u3001\u52a1\u5b9e\uff0c\u5e76\u4e13\u6ce8\u4e8e\u4ee3\u7801\u4e0e\u6267\u884c\u3002');
+		const systemPrompt = buildSystemPrompt(configuration.get<string>('systemPrompt')?.trim());
 
 		return {
 			baseUrl: configuredBaseUrl || process.env['ANTHROPIC_BASE_URL']?.trim() || 'https://api.anthropic.com',

@@ -17,6 +17,8 @@
     "onStartupFinished",
     "onView:beam.sidebar",
     "onCommand:beam.open",
+    "onCommand:beam.newChat",
+    "onCommand:beam.openSession",
     "onCommand:beam.sendSelection",
     "onCommand:beam.sendCurrentFile",
     "onCommand:beam.sendProblems",
@@ -27,10 +29,9 @@
     "onCommand:beam.previewReplaceSelectionWithCodeBlock",
     "onCommand:beam.acceptProposal",
     "onCommand:beam.rejectProposal",
+    "onCommand:beam.reopenProposal",
     "onCommand:beam.openProposalDiff",
     "onCommand:beam.openPendingChange",
-    "onCommand:beam.acceptAllChanges",
-    "onCommand:beam.rejectAllChanges",
     "onCommand:beam.nextProposal",
     "onCommand:beam.previousProposal",
     "onCommand:beam.focusActiveProposal",
@@ -40,8 +41,10 @@
     "onCommand:beam.focusSelection",
     "onCommand:beam.askAboutSelection",
     "onCommand:beam.addSelectionToChat",
+    "onCommand:beam.addSelectionToChatFromStatus",
     "onCommand:beam.editSelection",
     "onCommand:beam.explainSelection",
+    "onCommand:beam.selectionActions",
     "onCommand:beam.fixCurrentFile"
   ],
   "capabilities": {
@@ -140,43 +143,31 @@
       },
       {
         "command": "beam.openProposalDiff",
-        "title": "打开提议对比视图",
+        "title": "%command.openProposalDiff%",
         "category": "%command.category%",
         "icon": "$(diff)"
       },
       {
         "command": "beam.openPendingChange",
-        "title": "打开待处理更改",
+        "title": "%command.openPendingChange%",
         "category": "%command.category%",
         "icon": "$(go-to-file)"
       },
       {
-        "command": "beam.acceptAllChanges",
-        "title": "接受所有更改",
-        "category": "%command.category%",
-        "icon": "$(check-all)"
-      },
-      {
-        "command": "beam.rejectAllChanges",
-        "title": "拒绝所有更改",
-        "category": "%command.category%",
-        "icon": "$(close-all)"
-      },
-      {
         "command": "beam.previousProposal",
-        "title": "查看上一个提议文件",
+        "title": "%command.previousProposal%",
         "category": "%command.category%",
         "icon": "$(arrow-left)"
       },
       {
         "command": "beam.nextProposal",
-        "title": "查看下一个提议文件",
+        "title": "%command.nextProposal%",
         "category": "%command.category%",
         "icon": "$(arrow-right)"
       },
       {
         "command": "beam.focusActiveProposal",
-        "title": "在编辑器中定位当前提议",
+        "title": "%command.focusActiveProposal%",
         "category": "%command.category%",
         "icon": "$(go-to-file)"
       },
