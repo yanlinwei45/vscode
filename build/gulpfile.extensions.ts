@@ -9,6 +9,7 @@ EventEmitter.defaultMaxListeners = 100;
 
 import es from 'event-stream';
 import fancyLog from 'fancy-log';
+import * as fs from 'fs';
 import glob from 'glob';
 import gulp from 'gulp';
 import filter from 'gulp-filter';
@@ -97,7 +98,7 @@ const compilations = [
 	'.vscode/extensions/vscode-selfhost-test-provider/tsconfig.json',
 	'.vscode/extensions/vscode-selfhost-import-aid/tsconfig.json',
 	'.vscode/extensions/vscode-extras/tsconfig.json',
-];
+].filter(tsconfigFile => fs.existsSync(path.join(root, tsconfigFile)));
 
 const getBaseUrl = (out: string) => `https://main.vscode-cdn.net/sourcemaps/${commit}/${out}`;
 

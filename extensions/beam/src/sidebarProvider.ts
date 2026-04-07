@@ -110,6 +110,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				return;
 			}
 
+			if (message.type === 'setModel' && typeof message.value === 'string') {
+				await this.service.setSelectedModel(message.value);
+				return;
+			}
+
 			if (message.type === 'clearAttachments') {
 				this.composerService.clear();
 				return;
@@ -198,7 +203,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const emptyState = vscode.l10n.t('\u4ece\u8fd9\u91cc\u76f4\u63a5\u5f00\u59cb\u4e00\u6bb5\u65b0\u5bf9\u8bdd\u3002');
 		const send = vscode.l10n.t('\u53d1\u9001');
 		const attachLabel = vscode.l10n.t('\u4e0a\u4f20');
-		const thinking = vscode.l10n.t('\u601d\u8003\u4e2d...');
 		const previewInsertLabel = vscode.l10n.t('\u9884\u89c8\u63d2\u5165');
 		const previewReplaceLabel = vscode.l10n.t('\u9884\u89c8\u66ff\u6362');
 		const proposalTitle = vscode.l10n.t('\u7f16\u8f91\u63d0\u6848');
@@ -471,6 +475,51 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			display: grid;
 			gap: 8px;
 		}
+		.model-select {
+			width: 158px;
+			max-width: 42vw;
+			border-radius: 10px;
+			border: 0;
+			background: transparent;
+			color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+			padding: 7px 6px 7px 0;
+			font: inherit;
+			font-size: 12px;
+			font-weight: 600;
+			outline: none;
+		}
+		.model-select:hover {
+			background: color-mix(in srgb, var(--vscode-editor-background) 72%, transparent);
+		}
+		.model-select:focus {
+			background: color-mix(in srgb, var(--vscode-editor-background) 82%, transparent);
+		}
+		.icon-button {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			width: 34px;
+			height: 34px;
+			padding: 0;
+			border-radius: 999px;
+			font-size: 16px;
+			line-height: 1;
+		}
+		.icon-button.secondary {
+			background: color-mix(in srgb, var(--vscode-editor-background) 85%, transparent);
+		}
+		#attach {
+			border: 0;
+			background: transparent;
+			color: inherit;
+		}
+		#attach:hover {
+			background: color-mix(in srgb, var(--vscode-editor-background) 72%, transparent);
+		}
+		#attach:focus-visible {
+			outline: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 70%, transparent);
+			outline-offset: 0;
+		}
 		.proposal {
 			display: none;
 			gap: 10px;
@@ -692,9 +741,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			overflow-y: auto;
 		}
 		.composer-footer {
-			display: flex;
+			display: grid;
+			grid-template-columns: auto auto minmax(0, 1fr) auto;
 			align-items: center;
-			justify-content: space-between;
 			gap: 8px;
 			padding: 0 10px 10px;
 		}
@@ -702,6 +751,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			display: grid;
 			gap: 4px;
 			min-width: 0;
+			align-content: center;
 		}
 		.composer-status {
 			font-size: 11px;
@@ -717,6 +767,8 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		.composer-hint {
 			font-size: 12px;
 			opacity: 0.6;
+			overflow: hidden;
+			text-overflow: ellipsis;
 			white-space: nowrap;
 		}
 		.composer-shell.flash {
@@ -727,7 +779,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		}
 		.composer-actions {
 			display: flex;
-			justify-content: flex-end;
+			justify-content: center;
 			flex: 0 0 auto;
 		}
 		button {
@@ -748,9 +800,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		button[disabled] {
 			opacity: 0.5;
 			cursor: default;
-		}
-		.send-button {
-			min-width: 76px;
 		}
 	</style>
 </head>
@@ -789,13 +838,16 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					<div id="composerAttachments" class="composer-attachments"></div>
 					<textarea id="prompt" placeholder="${escapeHtml(placeholder)}"></textarea>
 					<div class="composer-footer">
+						<select id="modelSelect" class="model-select"></select>
+						<div class="composer-actions">
+							<button id="attach" class="secondary icon-button" title="${escapeHtml(attachLabel)}">+</button>
+						</div>
 						<div class="composer-meta">
 							<div id="composerStatus" class="composer-status"></div>
 							<div class="composer-hint">${escapeHtml(composerHint)}</div>
 						</div>
 						<div class="composer-actions">
-							<button id="attach" class="secondary">${escapeHtml(attachLabel)}</button>
-							<button id="send" class="send-button">${escapeHtml(send)}</button>
+							<button id="send" class="icon-button" title="${escapeHtml(send)}">↑</button>
 						</div>
 					</div>
 				</div>
@@ -809,6 +861,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const historyPanelEl = document.getElementById('historyPanel');
 		const historyListEl = document.getElementById('historyList');
 		const activeChatTitleEl = document.getElementById('activeChatTitle');
+		const modelSelectEl = document.getElementById('modelSelect');
 		const promptEl = document.getElementById('prompt');
 		const composerShellEl = document.querySelector('.composer-shell');
 		const composerDropOverlayEl = document.getElementById('composerDropOverlay');
@@ -853,10 +906,27 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			image: ${JSON.stringify(vscode.l10n.t('\u56fe\u7247'))},
 			pdf: ${JSON.stringify(vscode.l10n.t('PDF'))}
 		};
-		let state = { chat: { messages: [], busy: false, sessions: [] }, composer: { attachments: [] }, context: { summary: [] }, proposal: { active: false } };
+		let state = { chat: { messages: [], busy: false, sessions: [], availableModels: [], selectedModel: '' }, composer: { attachments: [] }, context: { summary: [] }, proposal: { active: false } };
 		let historyVisible = false;
 		let composerStatusTimer = undefined;
 		let dragDepth = 0;
+
+		function renderModels() {
+			modelSelectEl.innerHTML = '';
+			const models = state.chat.availableModels || [];
+			const selected = state.chat.selectedModel || '';
+			const finalModels = models.length ? models : [selected].filter(Boolean);
+			for (const model of finalModels) {
+				const value = typeof model === 'string' ? model : model.id;
+				const label = typeof model === 'string' ? model : model.label;
+				const option = document.createElement('option');
+				option.value = value;
+				option.textContent = label;
+				option.selected = value === selected;
+				modelSelectEl.appendChild(option);
+			}
+			modelSelectEl.disabled = state.chat.busy;
+		}
 
 		function showComposerStatus(text) {
 			if (!composerShellEl || !composerStatusEl) {
@@ -1346,13 +1416,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		}
 
 		function render() {
+			renderModels();
 			renderSessions();
 			renderAttachments();
 			renderProposal();
 			renderMessages();
 			sendEl.disabled = state.chat.busy;
 			attachEl.disabled = state.chat.busy;
-			sendEl.textContent = state.chat.busy ? ${JSON.stringify(thinking)} : ${JSON.stringify(send)};
+			sendEl.textContent = state.chat.busy ? '…' : '↑';
 			vscode.setState(state);
 		}
 
@@ -1377,6 +1448,13 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			}
 
 			vscode.postMessage({ type: 'command', command: 'beam.addAttachment' });
+		});
+		modelSelectEl.addEventListener('change', () => {
+			if (!modelSelectEl.value || state.chat.busy) {
+				return;
+			}
+
+			vscode.postMessage({ type: 'setModel', value: modelSelectEl.value });
 		});
 		toggleHistoryEl.addEventListener('click', () => {
 			historyVisible = !historyVisible;
@@ -1477,7 +1555,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			const message = event.data;
 			if (message.type === 'state') {
 				state = {
-					chat: message.value.chat || { messages: [], busy: false, sessions: [] },
+					chat: message.value.chat || { messages: [], busy: false, sessions: [], availableModels: [], selectedModel: '' },
 					composer: message.value.composer || { attachments: [] },
 					context: message.value.context || { summary: [] },
 					proposal: message.value.proposal || { active: false }
@@ -1516,7 +1594,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const previous = vscode.getState();
 		if (previous) {
 			state = {
-				chat: previous.chat || { messages: [], busy: false, sessions: [] },
+				chat: previous.chat || { messages: [], busy: false, sessions: [], availableModels: [], selectedModel: '' },
 				composer: previous.composer || { attachments: [] },
 				context: previous.context || { summary: [] },
 				proposal: previous.proposal || { active: false }

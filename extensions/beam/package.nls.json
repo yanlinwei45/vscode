@@ -33,6 +33,7 @@
 	"command.selectionActions": "对当前选区执行 Beam 操作",
 	"command.fixCurrentFile": "修复当前文件",
 	"config.systemPrompt.description": "发送给 Beam 的基础系统提示词。编辑提案与确认规则会由 Beam 额外追加。",
-	"config.model.description": "发送到兼容 Anthropic 接口时默认使用的模型标识。",
-	"config.baseUrl.description": "覆盖兼容 Anthropic 的基础地址。留空时使用 ANTHROPIC_BASE_URL。"
+	"config.provider.description": "选择 Beam 使用的后端提供方。anthropic 使用 Claude 接口，openai 使用 OpenAI Responses API。",
+	"config.model.description": "发送到当前 Beam 提供方时默认使用的模型标识。Anthropic 可配 Claude 模型，OpenAI 可配任意可用模型 ID。",
+	"config.baseUrl.description": "覆盖当前 Beam 提供方的基础地址。Anthropic 留空时使用 ANTHROPIC_BASE_URL，OpenAI 留空时使用 OPENAI_BASE_URL。"
 }

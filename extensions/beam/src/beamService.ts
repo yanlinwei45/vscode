@@ -7,11 +7,14 @@ import * as http from 'http';
 import * as https from 'https';
 import * as vscode from 'vscode';
 import type { IBeamComposerResolvedAttachments } from './composerService';
+import { readCodexOpenAIConfiguration, type ICodexOpenAIConfiguration } from './codexConfig';
 import { buildSystemPrompt } from './promptPolicy';
+import { buildOpenAIChatCompletionMessages, getBeamModelOption, getBeamModelOptions, inferBeamProviderForModel, normalizeBeamModelSelection, normalizeBeamProvider, parseOpenAIFunctionArguments, resolveBeamModel, toOpenAIChatCompletionTools, type BeamProvider, type IBeamModelOption, type IBeamTurnContentBlock, type IRequestTurn } from './providerUtils';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
 
 const STORAGE_KEY = 'beam.chatSessions.v2';
 const ACTIVE_SESSION_STORAGE_KEY = 'beam.activeChatSessionId.v1';
+const SELECTED_MODEL_STORAGE_KEY = 'beam.selectedModel.v1';
 const REQUEST_HISTORY_LIMIT = 30;
 const REQUEST_TIMEOUT_MS = 120000;
 const MAX_TOOL_ROUNDS = 8;
@@ -37,6 +40,8 @@ export interface IBeamChatState {
 	readonly busy: boolean;
 	readonly lastRequestContext?: string;
 	readonly pendingToolNames?: readonly string[];
+	readonly selectedModel: string;
+	readonly availableModels: readonly IBeamModelOption[];
 	readonly sessions: readonly IBeamChatSessionSummary[];
 	readonly activeSessionId?: string;
 	readonly activeSessionTitle?: string;
@@ -49,15 +54,15 @@ export interface IBeamChatSessionSummary {
 	readonly updatedAt: number;
 }
 
-interface IAnthropicTextBlock {
-	readonly type: 'text';
-	readonly text: string;
-}
-
 interface IAnthropicBase64Source {
 	readonly type: 'base64';
 	readonly media_type: string;
 	readonly data: string;
+}
+
+interface IAnthropicTextBlock {
+	readonly type: 'text';
+	readonly text: string;
 }
 
 interface IAnthropicImageBlock {
@@ -133,14 +138,74 @@ interface IAnthropicResponseOtherBlock {
 
 type IAnthropicResponseBlock = IAnthropicResponseTextBlock | IAnthropicResponseToolUseBlock | IAnthropicResponseOtherBlock;
 
+interface IOpenAIChatCompletionMessage {
+	readonly role: 'system' | 'user' | 'assistant' | 'tool';
+	readonly content?: string;
+	readonly tool_calls?: readonly IOpenAIChatCompletionToolCall[];
+	readonly tool_call_id?: string;
+}
+
+interface IOpenAIChatCompletionToolCall {
+	readonly id: string;
+	readonly type: 'function';
+	readonly function: {
+		readonly name: string;
+		readonly arguments: string;
+	};
+}
+
+interface IOpenAIChatCompletionToolDefinition {
+	readonly type: 'function';
+	readonly function: {
+		readonly name: string;
+		readonly description: string;
+		readonly parameters: {
+			readonly type: 'object';
+			readonly properties: Record<string, unknown>;
+			readonly required?: readonly string[];
+		};
+	};
+}
+
+interface IOpenAIChatCompletionsRequest {
+	readonly model: string;
+	readonly messages: readonly IOpenAIChatCompletionMessage[];
+	readonly tools?: readonly IOpenAIChatCompletionToolDefinition[];
+	readonly tool_choice?: 'auto';
+}
+
+interface IOpenAIChatCompletionsResponse {
+	readonly choices?: readonly IOpenAIChatCompletionChoice[];
+	error?: {
+		readonly message?: string;
+	};
+}
+
+interface IOpenAIChatCompletionChoice {
+	readonly message?: IOpenAIChatCompletionMessage;
+}
+
 interface IJsonResponse<T> {
 	readonly statusCode: number;
 	readonly body: T;
 }
 
-interface IRequestTurn {
-	readonly role: 'user' | 'assistant';
-	readonly content: readonly IAnthropicContentBlock[];
+interface IProviderToolUse {
+	readonly id: string;
+	readonly name: string;
+	readonly input?: unknown;
+}
+
+interface IBeamProviderConfiguration {
+	readonly provider: BeamProvider;
+	readonly baseUrl: string;
+	readonly apiKey?: string;
+	readonly authToken?: string;
+	readonly model: string;
+	readonly requestModel: string;
+	readonly anthropicBeta?: string;
+	readonly systemPrompt: string;
+	readonly configuredProvider: BeamProvider;
 }
 
 interface IBeamChatSessionRecord {
@@ -162,6 +227,8 @@ export class BeamService extends vscode.Disposable {
 	private pendingToolNames: string[] = [];
 	private sessions: IBeamChatSessionRecord[] = [];
 	private activeSessionId: string | undefined;
+	private selectedModel: string | undefined;
+	private codexOpenAIConfiguration: ICodexOpenAIConfiguration | undefined;
 
 	constructor(
 		private readonly storage: vscode.Memento,
@@ -178,15 +245,34 @@ export class BeamService extends vscode.Disposable {
 
 	getState(): IBeamChatState {
 		const activeSession = this.getActiveSession();
+		const configuration = this.getConfiguration();
 		return {
 			messages: this.messages,
 			busy: this.busy,
 			lastRequestContext: this.lastRequestContext,
 			pendingToolNames: this.pendingToolNames,
+			selectedModel: configuration.model,
+			availableModels: this.getAvailableModels(configuration),
 			sessions: this.sessions.map(session => toSessionSummary(session)),
 			activeSessionId: this.activeSessionId,
 			activeSessionTitle: activeSession?.title
 		};
+	}
+
+	async setSelectedModel(model: string): Promise<void> {
+		const normalized = normalizeBeamModelSelection(model);
+		if (!normalized) {
+			return;
+		}
+
+		this.selectedModel = normalized;
+		void this.storage.update(SELECTED_MODEL_STORAGE_KEY, normalized);
+		this._onDidChangeState.fire(this.getState());
+	}
+
+	async refreshModels(): Promise<void> {
+		// Beam intentionally uses a built-in static model list.
+		this._onDidChangeState.fire(this.getState());
 	}
 
 	reset(): void {
@@ -281,29 +367,41 @@ export class BeamService extends vscode.Disposable {
 		token?: vscode.CancellationToken,
 		attachments?: IBeamComposerResolvedAttachments
 	): Promise<string> {
-		const { baseUrl, apiKey, authToken, model, systemPrompt } = this.getConfiguration();
+		const configuration = this.getConfiguration();
+		if (configuration.provider === 'openai') {
+			return this.requestOpenAIResponse(configuration, progress, token, attachments);
+		}
+
+		return this.requestAnthropicResponse(configuration, progress, token, attachments);
+	}
+
+	private async requestAnthropicResponse(
+		configuration: IBeamProviderConfiguration,
+		progress?: vscode.Progress<{ message?: string; increment?: number }>,
+		token?: vscode.CancellationToken,
+		attachments?: IBeamComposerResolvedAttachments
+	): Promise<string> {
+		const { baseUrl, apiKey, authToken, requestModel: model, anthropicBeta, systemPrompt } = configuration;
 		if (!apiKey && !authToken) {
 			throw new Error(vscode.l10n.t('\u4f7f\u7528 Beam \u524d\uff0c\u8bf7\u5148\u8bbe\u7f6e ANTHROPIC_API_KEY \u6216 ANTHROPIC_AUTH_TOKEN\u3002'));
 		}
 
-		const endpoint = this.resolveEndpoint(baseUrl);
+		const endpoint = this.resolveAnthropicEndpoint(baseUrl);
 		const tools = this.toolService.getDefinitions();
 		const turns = this.buildInitialTurns(attachments);
 
 		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-			if (token?.isCancellationRequested) {
-				throw new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5df2\u53d6\u6d88\u3002'));
-			}
-
-			progress?.report({
-				message: round === 0 ? vscode.l10n.t('\u6b63\u5728\u8bf7\u6c42\u6a21\u578b\u54cd\u5e94...') : vscode.l10n.t('\u6b63\u5728\u7ee7\u7eed\u5904\u7406\u5de5\u5177\u7ed3\u679c...')
-			});
+			this.throwIfCancelled(token);
+			this.reportModelProgress(progress, round);
 
 			const body: IAnthropicRequest = {
 				model,
 				system: systemPrompt,
 				max_tokens: 8192,
-				messages: turns,
+				messages: turns.map(turn => ({
+					role: turn.role,
+					content: turn.content.map(toAnthropicContentBlock)
+				})),
 				tools,
 				tool_choice: { type: 'auto' }
 			};
@@ -312,14 +410,15 @@ export class BeamService extends vscode.Disposable {
 			const response = await postJson<IAnthropicResponse>(endpoint, {
 				'content-type': 'application/json',
 				'anthropic-version': '2023-06-01',
+				'anthropic-beta': anthropicBeta ?? '',
 				'x-api-key': apiKey ?? '',
 				'authorization': authToken ? `Bearer ${authToken}` : ''
 			}, body);
 			this.log(vscode.l10n.t('Beam \u5df2\u6536\u5230\u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
 
 			const blocks = response.body.content ?? [];
-			const assistantText = extractResponseText(response.body).trim();
-			const toolUses = extractToolUses(blocks);
+			const assistantText = extractAnthropicResponseText(response.body).trim();
+			const toolUses = extractAnthropicToolUses(blocks);
 
 			if (!toolUses.length) {
 				if (!assistantText) {
@@ -329,20 +428,15 @@ export class BeamService extends vscode.Disposable {
 				return assistantText;
 			}
 
-			if (assistantText) {
-				this.messages = [...this.messages, { role: 'assistant', content: assistantText }];
-				this.persistState();
-				this._onDidChangeState.fire(this.getState());
-			}
-
+			this.recordAssistantProgress(assistantText);
 			turns.push({
 				role: 'assistant',
 				content: blocks.map(block => {
-					if (isTextResponseBlock(block)) {
+					if (isAnthropicTextResponseBlock(block)) {
 						return { type: 'text', text: block.text };
 					}
 
-					if (isToolUseResponseBlock(block)) {
+					if (isAnthropicToolUseResponseBlock(block)) {
 						return {
 							type: 'tool_use',
 							id: block.id,
@@ -358,72 +452,230 @@ export class BeamService extends vscode.Disposable {
 				})
 			});
 
-			const toolResultBlocks: IAnthropicToolResultBlock[] = [];
-			const pendingToolNames = toolUses.map(toolUse => toolUse.name);
-			this.pendingToolNames = [...pendingToolNames];
-			this._onDidChangeState.fire(this.getState());
-			for (let index = 0; index < toolUses.length; index++) {
-				if (token?.isCancellationRequested) {
-					throw new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5df2\u53d6\u6d88\u3002'));
-				}
-
-				const toolUse = toolUses[index];
-				progress?.report({
-					message: vscode.l10n.t('\u6b63\u5728\u6267\u884c\uff1a{0} ({1}/{2})', toolUse.name, index + 1, toolUses.length)
-				});
-				const result = await this.toolService.invoke(toolUse.name, toolUse.input);
-				const content = result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
-				this.messages = [...this.messages, { role: 'tool', content, metadata: { toolName: result.toolName } }];
-				this.pendingToolNames = pendingToolNames.slice(index + 1);
-				toolResultBlocks.push({
-					type: 'tool_result',
-					tool_use_id: toolUse.id,
-					content
-				});
-				this._onDidChangeState.fire(this.getState());
-			}
-
-			this.pendingToolNames = [];
-			this.persistState();
-			this._onDidChangeState.fire(this.getState());
-
+			const toolResultBlocks = await this.invokeTools(toolUses, progress, token);
 			turns.push({
 				role: 'user',
-				content: toolResultBlocks
+				content: toolResultBlocks.map(result => ({
+					type: 'tool_result',
+					toolUseId: result.id,
+					content: result.content
+				}))
 			});
 		}
 
 		throw new Error(vscode.l10n.t('Beam \u8d85\u8fc7\u4e86\u6700\u5927\u5de5\u5177\u8c03\u7528\u8f6e\u6570\u3002'));
 	}
 
-	private getConfiguration(): {
-		readonly baseUrl: string;
-		readonly apiKey?: string;
-		readonly authToken?: string;
-		readonly model: string;
-		readonly systemPrompt: string;
-	} {
-		const configuration = vscode.workspace.getConfiguration('beam');
-		const configuredBaseUrl = configuration.get<string>('baseUrl')?.trim();
-		const model = configuration.get<string>('model')?.trim() || 'claude-sonnet-4-20250514';
-		const systemPrompt = buildSystemPrompt(configuration.get<string>('systemPrompt')?.trim());
+	private async requestOpenAIResponse(
+		configuration: IBeamProviderConfiguration,
+		progress?: vscode.Progress<{ message?: string; increment?: number }>,
+		token?: vscode.CancellationToken,
+		attachments?: IBeamComposerResolvedAttachments
+	): Promise<string> {
+		const { baseUrl, apiKey, requestModel: model, systemPrompt } = configuration;
+		if (!apiKey) {
+			throw new Error(vscode.l10n.t('\u4f7f\u7528 OpenAI \u7248 Beam \u524d\uff0c\u8bf7\u5148\u8bbe\u7f6e OPENAI_API_KEY\u3002'));
+		}
 
+		const endpoint = this.resolveOpenAIChatCompletionsEndpoint(baseUrl);
+		const tools = toOpenAIChatCompletionTools(this.toolService.getDefinitions());
+		const turns = this.buildInitialTurns(attachments);
+
+		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+			this.throwIfCancelled(token);
+			this.reportModelProgress(progress, round);
+
+			const body: IOpenAIChatCompletionsRequest = {
+				model,
+				messages: buildOpenAIChatCompletionMessages(systemPrompt, turns),
+				tools,
+				tool_choice: 'auto'
+			};
+
+			this.log(vscode.l10n.t('\u6b63\u5728\u5411 {0} \u53d1\u9001 OpenAI Chat Completions \u8bf7\u6c42\uff0c\u6a21\u578b\uff1a{1}\u3002', endpoint, model));
+			const response = await postJson<IOpenAIChatCompletionsResponse>(endpoint, {
+				'content-type': 'application/json',
+				'authorization': `Bearer ${apiKey}`
+			}, body);
+			this.log(vscode.l10n.t('Beam \u5df2\u6536\u5230 OpenAI \u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
+
+			const message = response.body.choices?.[0]?.message;
+			const assistantText = extractOpenAIChatCompletionText(message).trim();
+			const toolUses = extractOpenAIChatCompletionToolUses(message);
+
+			if (!toolUses.length) {
+				if (!assistantText) {
+					throw new Error(response.body.error?.message || vscode.l10n.t('Beam \u8fd4\u56de\u4e86\u7a7a\u54cd\u5e94\u3002'));
+				}
+
+				return assistantText;
+			}
+
+			this.recordAssistantProgress(assistantText);
+			turns.push({
+				role: 'assistant',
+				content: toBeamOpenAIChatCompletionBlocks(message)
+			});
+
+			const toolResultBlocks = await this.invokeTools(toolUses, progress, token);
+			turns.push({
+				role: 'user',
+				content: toolResultBlocks.map(result => ({
+					type: 'tool_result',
+					toolUseId: result.id,
+					content: result.content
+				}))
+			});
+		}
+
+		throw new Error(vscode.l10n.t('Beam \u8d85\u8fc7\u4e86\u6700\u5927\u5de5\u5177\u8c03\u7528\u8f6e\u6570\u3002'));
+	}
+
+	private getConfiguration(): IBeamProviderConfiguration {
+		const configuration = vscode.workspace.getConfiguration('beam');
+		const configuredProvider = normalizeBeamProvider(configuration.get<string>('provider') || process.env['BEAM_PROVIDER']);
+		const configuredBaseUrl = configuration.get<string>('baseUrl')?.trim();
+		const configuredModel = this.selectedModel || configuration.get<string>('model')?.trim();
+		const systemPrompt = buildSystemPrompt(configuration.get<string>('systemPrompt')?.trim());
+		const inferredProvider = inferBeamProviderForModel(configuredModel, configuredProvider);
+		return this.getConfigurationForProvider(inferredProvider, configuredProvider, configuredBaseUrl, configuredModel, systemPrompt);
+	}
+
+	private getConfigurationForProvider(
+		provider: BeamProvider,
+		configuredProvider: BeamProvider,
+		configuredBaseUrl: string | undefined,
+		configuredModel: string | undefined,
+		systemPrompt: string
+	): IBeamProviderConfiguration {
+		const codexOpenAIConfiguration = this.getCodexOpenAIConfiguration();
+		if (provider === 'openai') {
+			const baseUrl = configuredBaseUrl || process.env['OPENAI_BASE_URL']?.trim() || codexOpenAIConfiguration.baseUrl || 'https://api.openai.com';
+			const resolvedModel = resolveBeamModel(provider, configuredModel, process.env['OPENAI_MODEL'] || codexOpenAIConfiguration.model);
+			const migratedModel = baseUrl === codexOpenAIConfiguration.baseUrl
+				? normalizeBeamModelSelection(codexOpenAIConfiguration.modelMigrations.get(resolvedModel) || resolvedModel) || resolvedModel
+				: resolvedModel;
+			const modelOption = getBeamModelOption(migratedModel);
+			return {
+				provider,
+				configuredProvider,
+				baseUrl,
+				apiKey: process.env['OPENAI_API_KEY']?.trim() || codexOpenAIConfiguration.apiKey,
+				model: modelOption?.id ?? migratedModel,
+				requestModel: modelOption?.requestModel ?? migratedModel,
+				systemPrompt
+			};
+		}
+
+		const baseUrl = configuredBaseUrl || codexOpenAIConfiguration.baseUrl || 'https://api.anthropic.com';
+		const useCodexAnthropicProxy = Boolean(codexOpenAIConfiguration.baseUrl && baseUrl === codexOpenAIConfiguration.baseUrl);
+		const resolvedModel = resolveBeamModel(provider, configuredModel, process.env['ANTHROPIC_MODEL']);
+		const modelOption = getBeamModelOption(resolvedModel);
 		return {
-			baseUrl: configuredBaseUrl || process.env['ANTHROPIC_BASE_URL']?.trim() || 'https://api.anthropic.com',
-			apiKey: process.env['ANTHROPIC_API_KEY']?.trim() || undefined,
-			authToken: process.env['ANTHROPIC_AUTH_TOKEN']?.trim() || undefined,
-			model,
+			provider,
+			configuredProvider,
+			baseUrl,
+			apiKey: useCodexAnthropicProxy ? codexOpenAIConfiguration.apiKey : process.env['ANTHROPIC_API_KEY']?.trim() || undefined,
+			authToken: useCodexAnthropicProxy ? codexOpenAIConfiguration.apiKey : process.env['ANTHROPIC_AUTH_TOKEN']?.trim() || undefined,
+			model: modelOption?.id ?? resolvedModel,
+			requestModel: modelOption?.requestModel ?? resolvedModel,
+			anthropicBeta: modelOption?.anthropicBeta,
 			systemPrompt
 		};
 	}
 
-	private resolveEndpoint(baseUrl: string): string {
+	private getCodexOpenAIConfiguration(): ICodexOpenAIConfiguration {
+		if (!this.codexOpenAIConfiguration) {
+			this.codexOpenAIConfiguration = readCodexOpenAIConfiguration();
+		}
+
+		return this.codexOpenAIConfiguration;
+	}
+
+	private getAvailableModels(_configuration: IBeamProviderConfiguration): readonly IBeamModelOption[] {
+		return getBeamModelOptions();
+	}
+
+	private resolveAnthropicEndpoint(baseUrl: string): string {
 		const normalized = baseUrl.replace(/\/+$/, '');
 		if (normalized.endsWith('/v1/messages')) {
 			return normalized;
 		}
 
+		if (normalized.endsWith('/v1')) {
+			return `${normalized}/messages`;
+		}
+
 		return `${normalized}/v1/messages`;
+	}
+
+	private resolveOpenAIChatCompletionsEndpoint(baseUrl: string): string {
+		const normalized = baseUrl.replace(/\/+$/, '');
+		if (normalized.endsWith('/v1/chat/completions')) {
+			return normalized;
+		}
+
+		if (normalized.endsWith('/v1')) {
+			return `${normalized}/chat/completions`;
+		}
+
+		return `${normalized}/v1/chat/completions`;
+	}
+
+	private throwIfCancelled(token?: vscode.CancellationToken): void {
+		if (token?.isCancellationRequested) {
+			throw new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5df2\u53d6\u6d88\u3002'));
+		}
+	}
+
+	private reportModelProgress(progress: vscode.Progress<{ message?: string; increment?: number }> | undefined, round: number): void {
+		progress?.report({
+			message: round === 0 ? vscode.l10n.t('\u6b63\u5728\u8bf7\u6c42\u6a21\u578b\u54cd\u5e94...') : vscode.l10n.t('\u6b63\u5728\u7ee7\u7eed\u5904\u7406\u5de5\u5177\u7ed3\u679c...')
+		});
+	}
+
+	private recordAssistantProgress(assistantText: string): void {
+		if (!assistantText) {
+			return;
+		}
+
+		this.messages = [...this.messages, { role: 'assistant', content: assistantText }];
+		this.persistState();
+		this._onDidChangeState.fire(this.getState());
+	}
+
+	private async invokeTools(
+		toolUses: readonly IProviderToolUse[],
+		progress?: vscode.Progress<{ message?: string; increment?: number }>,
+		token?: vscode.CancellationToken
+	): Promise<Array<{ readonly id: string; readonly content: string }>> {
+		const toolResultBlocks: Array<{ readonly id: string; readonly content: string }> = [];
+		const pendingToolNames = toolUses.map(toolUse => toolUse.name);
+		this.pendingToolNames = [...pendingToolNames];
+		this._onDidChangeState.fire(this.getState());
+
+		for (let index = 0; index < toolUses.length; index++) {
+			this.throwIfCancelled(token);
+
+			const toolUse = toolUses[index];
+			progress?.report({
+				message: vscode.l10n.t('\u6b63\u5728\u6267\u884c\uff1a{0} ({1}/{2})', toolUse.name, index + 1, toolUses.length)
+			});
+			const result = await this.toolService.invoke(toolUse.name, toolUse.input);
+			const content = result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
+			this.messages = [...this.messages, { role: 'tool', content, metadata: { toolName: result.toolName } }];
+			this.pendingToolNames = pendingToolNames.slice(index + 1);
+			toolResultBlocks.push({
+				id: toolUse.id,
+				content
+			});
+			this._onDidChangeState.fire(this.getState());
+		}
+
+		this.pendingToolNames = [];
+		this.persistState();
+		this._onDidChangeState.fire(this.getState());
+		return toolResultBlocks;
 	}
 
 	private restoreState(): void {
@@ -447,6 +699,7 @@ export class BeamService extends vscode.Disposable {
 		this.activeSessionId = activeSession.id;
 		this.messages = [...activeSession.messages];
 		this.lastRequestContext = activeSession.lastRequestContext;
+		this.selectedModel = normalizeBeamModelSelection(this.storage.get<string>(SELECTED_MODEL_STORAGE_KEY));
 	}
 
 	private persistState(): void {
@@ -488,8 +741,8 @@ export class BeamService extends vscode.Disposable {
 		return trimTurnsForRequest(turns, MAX_HISTORY_CHAR_BUDGET);
 	}
 
-	private buildUserTurnContent(prompt: string, attachments?: IBeamComposerResolvedAttachments): IAnthropicContentBlock[] {
-		const blocks: IAnthropicContentBlock[] = [];
+	private buildUserTurnContent(prompt: string, attachments?: IBeamComposerResolvedAttachments): IBeamTurnContentBlock[] {
+		const blocks: IBeamTurnContentBlock[] = [];
 		const textParts = [trimMessageContent(prompt)];
 		const context = attachments?.context ?? this.lastRequestContext;
 		if (context) {
@@ -507,11 +760,8 @@ export class BeamService extends vscode.Disposable {
 		for (const image of attachments?.images ?? []) {
 			blocks.push({
 				type: 'image',
-				source: {
-					type: 'base64',
-					media_type: image.mediaType,
-					data: image.data
-				}
+				mediaType: image.mediaType,
+				data: image.data
 			});
 		}
 
@@ -519,11 +769,8 @@ export class BeamService extends vscode.Disposable {
 			blocks.push({
 				type: 'document',
 				title: document.label,
-				source: {
-					type: 'base64',
-					media_type: document.mediaType,
-					data: document.data
-				}
+				mediaType: document.mediaType,
+				data: document.data
 			});
 		}
 
@@ -578,30 +825,106 @@ export class BeamService extends vscode.Disposable {
 	}
 }
 
-function extractResponseText(response: IAnthropicResponse): string {
+function toAnthropicContentBlock(block: IBeamTurnContentBlock): IAnthropicContentBlock {
+	switch (block.type) {
+		case 'text':
+			return {
+				type: 'text',
+				text: block.text
+			};
+		case 'image':
+			return {
+				type: 'image',
+				source: {
+					type: 'base64',
+					media_type: block.mediaType,
+					data: block.data
+				}
+			};
+		case 'document':
+			return {
+				type: 'document',
+				title: block.title,
+				source: {
+					type: 'base64',
+					media_type: block.mediaType,
+					data: block.data
+				}
+			};
+		case 'tool_use':
+			return {
+				type: 'tool_use',
+				id: block.id,
+				name: block.name,
+				input: block.input
+			};
+		case 'tool_result':
+			return {
+				type: 'tool_result',
+				tool_use_id: block.toolUseId,
+				content: block.content
+			};
+	}
+}
+
+function extractAnthropicResponseText(response: IAnthropicResponse): string {
 	return (response.content ?? [])
-		.filter(isTextResponseBlock)
+		.filter(isAnthropicTextResponseBlock)
 		.map(block => block.text)
 		.join('');
 }
 
-function extractToolUses(blocks: readonly IAnthropicResponseBlock[]): IAnthropicToolUseBlock[] {
+function extractAnthropicToolUses(blocks: readonly IAnthropicResponseBlock[]): IProviderToolUse[] {
 	return blocks
-		.filter(isToolUseResponseBlock)
+		.filter(isAnthropicToolUseResponseBlock)
 		.map(block => ({
-			type: 'tool_use',
 			id: block.id,
 			name: block.name,
 			input: block.input
 		}));
 }
 
-function isTextResponseBlock(block: IAnthropicResponseBlock): block is IAnthropicResponseTextBlock {
+function isAnthropicTextResponseBlock(block: IAnthropicResponseBlock): block is IAnthropicResponseTextBlock {
 	return block.type === 'text' && typeof block.text === 'string';
 }
 
-function isToolUseResponseBlock(block: IAnthropicResponseBlock): block is IAnthropicResponseToolUseBlock {
+function isAnthropicToolUseResponseBlock(block: IAnthropicResponseBlock): block is IAnthropicResponseToolUseBlock {
 	return block.type === 'tool_use' && 'id' in block && typeof block.id === 'string' && 'name' in block && typeof block.name === 'string';
+}
+
+function extractOpenAIChatCompletionText(message: IOpenAIChatCompletionMessage | undefined): string {
+	return typeof message?.content === 'string' ? message.content : '';
+}
+
+function extractOpenAIChatCompletionToolUses(message: IOpenAIChatCompletionMessage | undefined): IProviderToolUse[] {
+	return (message?.tool_calls ?? [])
+		.map(call => ({
+			id: call.id,
+			name: call.function.name,
+			input: parseOpenAIFunctionArguments(call.function.arguments)
+		}))
+		.filter(item => Boolean(item.name));
+}
+
+function toBeamOpenAIChatCompletionBlocks(message: IOpenAIChatCompletionMessage | undefined): IBeamTurnContentBlock[] {
+	const blocks: IBeamTurnContentBlock[] = [];
+	if (typeof message?.content === 'string' && message.content) {
+		blocks.push({
+			type: 'text',
+			text: message.content
+		});
+	}
+
+	for (const call of message?.tool_calls ?? []) {
+			blocks.push({
+				type: 'tool_use',
+				id: call.id,
+				name: call.function.name,
+				input: parseOpenAIFunctionArguments(call.function.arguments)
+			});
+	}
+
+	return blocks;
 }
 
 function isBeamChatMessage(value: IBeamChatMessage | undefined): value is IBeamChatMessage {
@@ -720,7 +1043,7 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 				try {
 					const parsed = JSON.parse(text) as T;
 					if ((response.statusCode ?? 500) >= 400) {
-						const errorMessage = (parsed as IAnthropicResponse).error?.message;
+						const errorMessage = getResponseErrorMessage(parsed);
 						reject(new Error(errorMessage || vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode ?? 0)));
 						return;
 					}
@@ -730,7 +1053,8 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 						body: parsed
 					});
 				} catch (error) {
-					reject(error);
+					const preview = text.replace(/\s+/g, ' ').slice(0, 180);
+					reject(new Error(vscode.l10n.t('Beam 请求返回了非 JSON 响应，状态码：{0}，内容开头：{1}', response.statusCode ?? 0, preview)));
 				}
 			});
 		});
@@ -742,4 +1066,9 @@ function postJson<T>(urlString: string, headers: Record<string, string>, body: u
 		request.write(payload);
 		request.end();
 	});
+}
+
+function getResponseErrorMessage(value: unknown): string | undefined {
+	const maybeError = (value as { error?: { message?: unknown } }).error;
+	return typeof maybeError?.message === 'string' ? maybeError.message : undefined;
 }

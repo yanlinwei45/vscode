@@ -345,6 +345,16 @@
           "description": "%config.systemPrompt.description%",
           "scope": "application"
         },
+        "beam.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "default": "anthropic",
+          "description": "%config.provider.description%",
+          "scope": "application"
+        },
         "beam.model": {
           "type": "string",
           "default": "claude-sonnet-4-20250514",
