@@ -22,6 +22,7 @@
     "onCommand:beam.sendSelection",
     "onCommand:beam.sendCurrentFile",
     "onCommand:beam.sendProblems",
+    "onCommand:beam.addAttachment",
     "onCommand:beam.showLogs",
     "onCommand:beam.insertCodeBlock",
     "onCommand:beam.replaceSelectionWithCodeBlock",
@@ -102,6 +103,12 @@
         "title": "%command.sendProblems%",
         "category": "%command.category%",
         "icon": "$(warning)"
+      },
+      {
+        "command": "beam.addAttachment",
+        "title": "%command.addAttachment%",
+        "category": "%command.category%",
+        "icon": "$(attach)"
       },
       {
         "command": "beam.showLogs",
@@ -248,6 +255,9 @@
         },
         {
           "command": "beam.sendProblems"
+        },
+        {
+          "command": "beam.addAttachment"
         },
         {
           "command": "beam.showLogs"

@@ -6,6 +6,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import * as vscode from 'vscode';
+import type { IBeamComposerResolvedAttachments } from './composerService';
 import { buildSystemPrompt } from './promptPolicy';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
 
@@ -53,6 +54,23 @@ interface IAnthropicTextBlock {
 	readonly text: string;
 }
 
+interface IAnthropicBase64Source {
+	readonly type: 'base64';
+	readonly media_type: string;
+	readonly data: string;
+}
+
+interface IAnthropicImageBlock {
+	readonly type: 'image';
+	readonly source: IAnthropicBase64Source;
+}
+
+interface IAnthropicDocumentBlock {
+	readonly type: 'document';
+	readonly source: IAnthropicBase64Source;
+	readonly title?: string;
+}
+
 interface IAnthropicToolUseBlock {
 	readonly type: 'tool_use';
 	readonly id: string;
@@ -66,7 +84,12 @@ interface IAnthropicToolResultBlock {
 	readonly content: string;
 }
 
-type IAnthropicContentBlock = IAnthropicTextBlock | IAnthropicToolUseBlock | IAnthropicToolResultBlock;
+type IAnthropicContentBlock =
+	| IAnthropicTextBlock
+	| IAnthropicImageBlock
+	| IAnthropicDocumentBlock
+	| IAnthropicToolUseBlock
+	| IAnthropicToolResultBlock;
 
 interface IAnthropicMessage {
 	readonly role: 'user' | 'assistant';
@@ -209,8 +232,13 @@ export class BeamService extends vscode.Disposable {
 	}
 
 	async sendUserMessage(prompt: string, requestContext?: string): Promise<void> {
+		await this.sendUserMessageWithAttachments(prompt, requestContext);
+	}
+
+	async sendUserMessageWithAttachments(prompt: string, requestContext?: string, attachments?: IBeamComposerResolvedAttachments): Promise<void> {
 		const trimmed = prompt.trim();
-		if (this.busy || (!trimmed && !requestContext?.trim())) {
+		const hasAttachmentPayload = Boolean(attachments?.context || attachments?.images.length || attachments?.documents.length);
+		if (this.busy || (!trimmed && !requestContext?.trim() && !hasAttachmentPayload)) {
 			return;
 		}
 
@@ -228,7 +256,7 @@ export class BeamService extends vscode.Disposable {
 				title: vscode.l10n.t('Beam \u6b63\u5728\u601d\u8003...'),
 				cancellable: true
 			}, async (progress, token) => {
-				const content = await this.requestAssistantResponse(progress, token);
+				const content = await this.requestAssistantResponse(progress, token, attachments);
 				this.messages = [...this.messages, { role: 'assistant', content }];
 				this.persistState();
 			});
@@ -250,7 +278,8 @@ export class BeamService extends vscode.Disposable {
 
 	private async requestAssistantResponse(
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
-		token?: vscode.CancellationToken
+		token?: vscode.CancellationToken,
+		attachments?: IBeamComposerResolvedAttachments
 	): Promise<string> {
 		const { baseUrl, apiKey, authToken, model, systemPrompt } = this.getConfiguration();
 		if (!apiKey && !authToken) {
@@ -259,7 +288,7 @@ export class BeamService extends vscode.Disposable {
 
 		const endpoint = this.resolveEndpoint(baseUrl);
 		const tools = this.toolService.getDefinitions();
-		const turns = this.buildInitialTurns();
+		const turns = this.buildInitialTurns(attachments);
 
 		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
 			if (token?.isCancellationRequested) {
@@ -438,7 +467,7 @@ export class BeamService extends vscode.Disposable {
 		void this.storage.update(ACTIVE_SESSION_STORAGE_KEY, activeSessionId);
 	}
 
-	private buildInitialTurns(): IRequestTurn[] {
+	private buildInitialTurns(attachments?: IBeamComposerResolvedAttachments): IRequestTurn[] {
 		const turns = this.messages
 			.filter(message => message.role !== 'system' && message.role !== 'tool')
 			.slice(-REQUEST_HISTORY_LIMIT)
@@ -450,23 +479,55 @@ export class BeamService extends vscode.Disposable {
 					};
 				}
 
-				if (index === array.length - 1 && this.lastRequestContext) {
-					return {
-						role: 'user',
-						content: [{
-							type: 'text',
-							text: `${trimMessageContent(message.content)}\n\n\u9644\u52a0\u4e0a\u4e0b\u6587\uff1a\n${this.lastRequestContext}`
-						}]
-					};
-				}
-
 				return {
 					role: 'user',
-					content: [{ type: 'text', text: trimMessageContent(message.content) }]
+					content: this.buildUserTurnContent(message.content, index === array.length - 1 ? attachments : undefined)
 				};
 			});
 
 		return trimTurnsForRequest(turns, MAX_HISTORY_CHAR_BUDGET);
+	}
+
+	private buildUserTurnContent(prompt: string, attachments?: IBeamComposerResolvedAttachments): IAnthropicContentBlock[] {
+		const blocks: IAnthropicContentBlock[] = [];
+		const textParts = [trimMessageContent(prompt)];
+		const context = attachments?.context ?? this.lastRequestContext;
+		if (context) {
+			textParts.push(`\u9644\u52a0\u4e0a\u4e0b\u6587\uff1a\n${context}`);
+		}
+
+		const text = textParts.filter(Boolean).join('\n\n').trim();
+		if (text) {
+			blocks.push({
+				type: 'text',
+				text
+			});
+		}
+
+		for (const image of attachments?.images ?? []) {
+			blocks.push({
+				type: 'image',
+				source: {
+					type: 'base64',
+					media_type: image.mediaType,
+					data: image.data
+				}
+			});
+		}
+
+		for (const document of attachments?.documents ?? []) {
+			blocks.push({
+				type: 'document',
+				title: document.label,
+				source: {
+					type: 'base64',
+					media_type: document.mediaType,
+					data: document.data
+				}
+			});
+		}
+
+		return blocks.length ? blocks : [{ type: 'text', text: vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002') }];
 	}
 
 	private getActiveSession(): IBeamChatSessionRecord | undefined {

@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { BeamService } from './beamService';
-import { BeamComposerService, type IBeamComposerAttachmentState } from './composerService';
+import { BeamComposerService, type IBeamComposerAttachmentState, type IBeamWebAttachmentInput } from './composerService';
 import { BeamContextService } from './contextService';
 import { BeamProposalService } from './proposalService';
 
@@ -51,11 +51,12 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		webviewView.webview.html = this.getHtml(webviewView.webview);
 		this.localDisposables.push(webviewView.webview.onDidReceiveMessage(async message => {
 			if (message.type === 'send' && typeof message.prompt === 'string') {
+				const resolvedAttachments = this.composerService.resolveAttachments(message.prompt);
 				const requestContext = joinContextBlocks(
 					await this.contextService.buildPromptContext(),
-					this.composerService.buildAttachmentContext(message.prompt)
+					resolvedAttachments.context
 				);
-				await this.service.sendUserMessage(message.prompt, requestContext);
+				await this.service.sendUserMessageWithAttachments(message.prompt, requestContext, resolvedAttachments);
 				this.composerService.clear();
 				return;
 			}
@@ -68,6 +69,34 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			if (message.type === 'removeAttachment' && typeof message.id === 'string') {
 				this.composerService.removeAttachment(message.id);
+				return;
+			}
+
+			if (message.type === 'openAttachment' && typeof message.id === 'string') {
+				const attachment = this.composerService.getState().attachments.find(item => item.id === message.id);
+				if (attachment?.originalUri) {
+					if (attachment.originalUri.startsWith('beam-upload:')) {
+						void vscode.window.showInformationMessage(vscode.l10n.t('这是 Beam 会话内上传的附件，当前不会在编辑器中单独打开。'));
+						return;
+					}
+
+					await vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(attachment.originalUri), {
+						preview: false
+					});
+				}
+				return;
+			}
+
+			if (message.type === 'addWebAttachments' && Array.isArray(message.items)) {
+				try {
+					const attachments = this.composerService.addWebAttachments(message.items.filter(isWebAttachmentInput));
+					for (const attachment of attachments) {
+						this.showAttachmentAdded(attachment);
+					}
+				} catch (error) {
+					const text = error instanceof Error ? error.message : vscode.l10n.t('附加文件失败。');
+					void vscode.window.showErrorMessage(text);
+				}
 				return;
 			}
 
@@ -123,7 +152,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 	}
 
 	showAttachmentAdded(_attachment: IBeamComposerAttachmentState): void {
-		const message = vscode.l10n.t('已附加当前选区，继续提问即可');
+		const message = vscode.l10n.t('已附加到对话，继续提问即可');
 		if (this.view) {
 			void this.view.webview.postMessage({ type: 'showComposerStatus', value: message });
 			this.view.show?.(true);
@@ -163,6 +192,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const placeholder = vscode.l10n.t('\u8f93\u5165\u9700\u6c42\uff0c\u6bd4\u5982\uff1a\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u3001\u4fee\u590d\u9519\u8bef\u3001\u91cd\u6784\u5f53\u524d\u6587\u4ef6...');
 		const emptyState = vscode.l10n.t('\u4ece\u8fd9\u91cc\u76f4\u63a5\u5f00\u59cb\u4e00\u6bb5\u65b0\u5bf9\u8bdd\u3002');
 		const send = vscode.l10n.t('\u53d1\u9001');
+		const attachLabel = vscode.l10n.t('\u4e0a\u4f20');
 		const thinking = vscode.l10n.t('\u601d\u8003\u4e2d...');
 		const previewInsertLabel = vscode.l10n.t('\u9884\u89c8\u63d2\u5165');
 		const previewReplaceLabel = vscode.l10n.t('\u9884\u89c8\u66ff\u6362');
@@ -194,6 +224,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const currentChatLabel = vscode.l10n.t('\u5f53\u524d\u5bf9\u8bdd');
 		const historyEmptyLabel = vscode.l10n.t('\u6682\u65e0\u5386\u53f2\u5bf9\u8bdd');
 		const composerHint = vscode.l10n.t('\u56de\u8f66\u53d1\u9001\uff0cShift+Enter \u6362\u884c');
+		const dropHint = vscode.l10n.t('\u62d6\u62fd\u6587\u4ef6/\u56fe\u7247\u5230\u8fd9\u91cc\uff0c\u6216\u76f4\u63a5\u7c98\u8d34\u622a\u56fe');
 		return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -507,12 +538,38 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			overflow: hidden;
 			box-shadow: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
 			transition: border-color 120ms ease, box-shadow 120ms ease;
+			position: relative;
 		}
 		.composer-shell:focus-within {
 			border-color: color-mix(in srgb, var(--vscode-focusBorder) 78%, var(--vscode-input-border, var(--vscode-panel-border)));
 			box-shadow:
 				0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 34%, transparent),
 				0 10px 22px rgba(0, 0, 0, 0.08);
+		}
+		.composer-shell.dragover {
+			border-color: color-mix(in srgb, var(--vscode-button-background) 78%, var(--vscode-focusBorder));
+			box-shadow:
+				0 0 0 1px color-mix(in srgb, var(--vscode-button-background) 28%, transparent),
+				0 14px 30px rgba(0, 0, 0, 0.12);
+		}
+		.composer-drop-overlay {
+			position: absolute;
+			inset: 0;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 18px;
+			text-align: center;
+			font-size: 14px;
+			font-weight: 700;
+			line-height: 1.5;
+			color: var(--vscode-button-foreground);
+			background: color-mix(in srgb, var(--vscode-button-background) 82%, transparent);
+			backdrop-filter: blur(6px);
+			z-index: 2;
+		}
+		.composer-drop-overlay.active {
+			display: flex;
 		}
 		.composer-attachments {
 			display: none;
@@ -566,6 +623,26 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			font-size: 10px;
 			opacity: 0.68;
 			flex: 0 0 auto;
+			max-width: 80px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.attachment-open {
+			border: 0;
+			background: transparent;
+			color: inherit;
+			width: 18px;
+			height: 18px;
+			padding: 0;
+			border-radius: 999px;
+			font-size: 12px;
+			cursor: pointer;
+			flex: 0 0 auto;
+			opacity: 0.78;
+		}
+		.attachment-open:hover {
+			background: color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
 		}
 		.attachment-remove {
 			border: 0;
@@ -693,6 +770,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				</div>
 			</div>
 				<div class="composer-shell">
+					<div id="composerDropOverlay" class="composer-drop-overlay">${escapeHtml(dropHint)}</div>
 					<div id="composerAttachments" class="composer-attachments"></div>
 					<textarea id="prompt" placeholder="${escapeHtml(placeholder)}"></textarea>
 					<div class="composer-footer">
@@ -701,6 +779,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 							<div class="composer-hint">${escapeHtml(composerHint)}</div>
 						</div>
 						<div class="composer-actions">
+							<button id="attach" class="secondary">${escapeHtml(attachLabel)}</button>
 							<button id="send" class="send-button">${escapeHtml(send)}</button>
 						</div>
 					</div>
@@ -717,7 +796,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const activeChatTitleEl = document.getElementById('activeChatTitle');
 		const promptEl = document.getElementById('prompt');
 		const composerShellEl = document.querySelector('.composer-shell');
+		const composerDropOverlayEl = document.getElementById('composerDropOverlay');
 		const composerStatusEl = document.getElementById('composerStatus');
+		const attachEl = document.getElementById('attach');
 		const sendEl = document.getElementById('send');
 		const composerAttachmentsEl = document.getElementById('composerAttachments');
 		const proposalEl = document.getElementById('proposal');
@@ -752,11 +833,15 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const attachmentKindLabels = {
 			selection: ${JSON.stringify(vscode.l10n.t('\u9009\u533a'))},
 			file: ${JSON.stringify(vscode.l10n.t('\u6587\u4ef6'))},
-			problems: ${JSON.stringify(vscode.l10n.t('\u95ee\u9898'))}
+			problems: ${JSON.stringify(vscode.l10n.t('\u95ee\u9898'))},
+			upload: ${JSON.stringify(vscode.l10n.t('\u9644\u4ef6'))},
+			image: ${JSON.stringify(vscode.l10n.t('\u56fe\u7247'))},
+			pdf: ${JSON.stringify(vscode.l10n.t('PDF'))}
 		};
 		let state = { chat: { messages: [], busy: false, sessions: [] }, composer: { attachments: [] }, context: { summary: [] }, proposal: { active: false } };
 		let historyVisible = false;
 		let composerStatusTimer = undefined;
+		let dragDepth = 0;
 
 		function showComposerStatus(text) {
 			if (!composerShellEl || !composerStatusEl) {
@@ -801,6 +886,46 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			promptEl.value = normalized ? normalized + '\\n' + value : value;
 			focusComposer();
 			showComposerStatus(${JSON.stringify(vscode.l10n.t('\u5df2\u52a0\u5165\u8f93\u5165\u6846'))});
+		}
+
+		function setDragActive(active) {
+			if (!composerShellEl || !composerDropOverlayEl) {
+				return;
+			}
+
+			composerShellEl.classList.toggle('dragover', active);
+			composerDropOverlayEl.classList.toggle('active', active);
+		}
+
+		async function readFileAsBase64(file) {
+			const buffer = await file.arrayBuffer();
+			const bytes = new Uint8Array(buffer);
+			let binary = '';
+			const chunkSize = 0x8000;
+			for (let i = 0; i < bytes.length; i += chunkSize) {
+				binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+			}
+
+			return btoa(binary);
+		}
+
+		async function postWebAttachments(fileList) {
+			if (!fileList || !fileList.length) {
+				return;
+			}
+
+			const items = [];
+			for (const file of Array.from(fileList)) {
+				items.push({
+					name: file.name,
+					mediaType: file.type || undefined,
+					data: await readFileAsBase64(file)
+				});
+			}
+
+			if (items.length) {
+				vscode.postMessage({ type: 'addWebAttachments', items });
+			}
 		}
 
 		function seedPromptValue(value) {
@@ -1032,8 +1157,20 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 				const meta = document.createElement('div');
 				meta.className = 'attachment-meta';
-				meta.textContent = Math.max(1, Math.ceil((attachment.contentLength || 0) / 1000)) + 'k';
+				meta.textContent = attachment.detail || (Math.max(1, Math.ceil((attachment.contentLength || 0) / 1000)) + 'k');
 				item.appendChild(meta);
+
+				if (attachment.originalUri) {
+					const open = document.createElement('button');
+					open.className = 'attachment-open';
+					open.textContent = '↗';
+					open.title = ${JSON.stringify(vscode.l10n.t('打开附件'))};
+					open.addEventListener('click', event => {
+						event.stopPropagation();
+						vscode.postMessage({ type: 'openAttachment', id: attachment.id });
+					});
+					item.appendChild(open);
+				}
 
 				const remove = document.createElement('button');
 				remove.className = 'attachment-remove';
@@ -1185,6 +1322,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			renderProposal();
 			renderMessages();
 			sendEl.disabled = state.chat.busy;
+			attachEl.disabled = state.chat.busy;
 			sendEl.textContent = state.chat.busy ? ${JSON.stringify(thinking)} : ${JSON.stringify(send)};
 			vscode.setState(state);
 		}
@@ -1204,6 +1342,13 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		}
 
 		sendEl.addEventListener('click', send);
+		attachEl.addEventListener('click', () => {
+			if (state.chat.busy) {
+				return;
+			}
+
+			vscode.postMessage({ type: 'command', command: 'beam.addAttachment' });
+		});
 		toggleHistoryEl.addEventListener('click', () => {
 			historyVisible = !historyVisible;
 			render();
@@ -1248,6 +1393,55 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		});
 		promptEl.addEventListener('input', () => {
 			syncPromptHeight();
+		});
+		composerShellEl.addEventListener('dragenter', event => {
+			if (state.chat.busy) {
+				return;
+			}
+
+			event.preventDefault();
+			dragDepth += 1;
+			setDragActive(true);
+		});
+		composerShellEl.addEventListener('dragover', event => {
+			if (state.chat.busy) {
+				return;
+			}
+
+			event.preventDefault();
+			event.dataTransfer.dropEffect = 'copy';
+			setDragActive(true);
+		});
+		composerShellEl.addEventListener('dragleave', event => {
+			if (state.chat.busy) {
+				return;
+			}
+
+			event.preventDefault();
+			dragDepth = Math.max(0, dragDepth - 1);
+			if (dragDepth === 0) {
+				setDragActive(false);
+			}
+		});
+		composerShellEl.addEventListener('drop', async event => {
+			if (state.chat.busy) {
+				return;
+			}
+
+			event.preventDefault();
+			dragDepth = 0;
+			setDragActive(false);
+			await postWebAttachments(event.dataTransfer.files);
+		});
+		promptEl.addEventListener('paste', async event => {
+			const files = Array.from(event.clipboardData?.files || []);
+			if (!files.length || state.chat.busy) {
+				return;
+			}
+
+			event.preventDefault();
+			await postWebAttachments(files);
+			showComposerStatus(${JSON.stringify(vscode.l10n.t('\u5df2\u7c98\u8d34\u4e3a Beam \u9644\u4ef6'))});
 		});
 
 		window.addEventListener('message', event => {
@@ -1325,6 +1519,17 @@ function escapeHtml(value: string): string {
 		.replace(/>/g, '&gt;')
 		.replace(/"/g, '&quot;')
 		.replace(/'/g, '&#39;');
+}
+
+function isWebAttachmentInput(value: unknown): value is IBeamWebAttachmentInput {
+	if (!value || typeof value !== 'object') {
+		return false;
+	}
+
+	const candidate = value as IBeamWebAttachmentInput;
+	return typeof candidate.data === 'string'
+		&& (!candidate.name || typeof candidate.name === 'string')
+		&& (!candidate.mediaType || typeof candidate.mediaType === 'string');
 }
 
 function joinContextBlocks(...parts: Array<string | undefined>): string | undefined {

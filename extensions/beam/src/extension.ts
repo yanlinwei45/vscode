@@ -47,6 +47,7 @@ const FIX_CURRENT_FILE_COMMAND = "beam.fixCurrentFile";
 const OPEN_SESSION_COMMAND = "beam.openSession";
 const ADD_SELECTION_TO_CHAT_STATUS_COMMAND =
 	"beam.addSelectionToChatFromStatus";
+const ADD_ATTACHMENT_COMMAND = "beam.addAttachment";
 
 export function activate(context: vscode.ExtensionContext): void {
 	const outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
@@ -160,6 +161,61 @@ export function activate(context: vscode.ExtensionContext): void {
 
 			await revealSidebar(provider, true);
 			provider.showAttachmentAdded(attachment);
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand(ADD_ATTACHMENT_COMMAND, async () => {
+			const picks = await vscode.window.showOpenDialog({
+				canSelectMany: true,
+				canSelectFiles: true,
+				canSelectFolders: false,
+				openLabel: vscode.l10n.t("附加到 Beam"),
+				filters: {
+					[vscode.l10n.t("支持的文件")]: [
+						"png",
+						"jpg",
+						"jpeg",
+						"gif",
+						"webp",
+						"pdf",
+						"txt",
+						"md",
+						"json",
+						"ts",
+						"tsx",
+						"js",
+						"jsx",
+						"css",
+						"scss",
+						"html",
+						"yml",
+						"yaml",
+						"xml",
+						"csv",
+						"log"
+					]
+				}
+			});
+
+			if (!picks?.length) {
+				return;
+			}
+
+			try {
+				const attachments = await composerService.addUploadedAttachments(picks);
+				if (!attachments.length) {
+					return;
+				}
+
+				await revealSidebar(provider, true);
+				for (const attachment of attachments) {
+					provider.showAttachmentAdded(attachment);
+				}
+			} catch (error) {
+				const message = error instanceof Error ? error.message : vscode.l10n.t("附加文件失败。");
+				void vscode.window.showErrorMessage(message);
+			}
 		}),
 	);
 

@@ -9,6 +9,7 @@
 	"command.newChat": "新建对话",
 	"command.sendCurrentFile": "将当前文件发送到 Beam",
 	"command.sendProblems": "将问题列表发送到 Beam",
+	"command.addAttachment": "向 Beam 添加文件或图片附件",
 	"command.showLogs": "显示 Beam 日志",
 	"command.insertCodeBlock": "为 Beam 代码块创建插入提议",
 	"command.replaceSelectionWithCodeBlock": "为 Beam 代码块创建替换提议",

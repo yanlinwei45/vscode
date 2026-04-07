@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { getEditorLabel, getEditorSelectionSnapshot, getPreferredCodeEditor } from './editorContext';
+import { classifyUploadedAttachment, formatByteSize, getAttachmentTypeLabel, getImageMediaType, getPreferredExtensionForMediaType } from './attachmentUtils';
 
 const MAX_ATTACHMENT_PREVIEW = 220;
 const MAX_FILE_PREVIEW = 260;
@@ -12,8 +14,15 @@ const MAX_PROBLEM_PREVIEW = 240;
 const MAX_ATTACHMENT_CONTEXT_CHARS = 7000;
 const MAX_TOTAL_ATTACHMENT_CONTEXT_CHARS = 12000;
 const SELECTION_CONTEXT_PREVIEW_LINE_COUNT = 2;
+const MAX_UPLOADED_TEXT_CHARS = 12000;
 
-type BeamComposerAttachmentKind = 'selection' | 'file' | 'problems';
+type BeamComposerAttachmentKind = 'selection' | 'file' | 'problems' | 'upload' | 'image' | 'pdf';
+
+interface IBeamAttachmentBinaryPayload {
+	readonly mediaType: string;
+	readonly data: string;
+	readonly size: number;
+}
 
 interface IBeamComposerAttachment {
 	readonly id: string;
@@ -23,6 +32,8 @@ interface IBeamComposerAttachment {
 	readonly preview: string;
 	readonly content: string;
 	readonly included: boolean;
+	readonly originalUri?: string;
+	readonly binary?: IBeamAttachmentBinaryPayload;
 }
 
 type IBeamComposerAttachmentDraft = Omit<IBeamComposerAttachment, 'included'>;
@@ -35,6 +46,7 @@ export interface IBeamComposerAttachmentState {
 	readonly preview: string;
 	readonly included: boolean;
 	readonly contentLength: number;
+	readonly originalUri?: string;
 }
 
 interface IBeamComposerAttachmentReference {
@@ -44,6 +56,32 @@ interface IBeamComposerAttachmentReference {
 
 export interface IBeamComposerState {
 	readonly attachments: readonly IBeamComposerAttachmentState[];
+}
+
+export interface IBeamComposerMessageImageAttachment {
+	readonly type: 'image';
+	readonly label: string;
+	readonly mediaType: string;
+	readonly data: string;
+}
+
+export interface IBeamComposerMessageDocumentAttachment {
+	readonly type: 'document';
+	readonly label: string;
+	readonly mediaType: string;
+	readonly data: string;
+}
+
+export interface IBeamComposerResolvedAttachments {
+	readonly context: string | undefined;
+	readonly images: readonly IBeamComposerMessageImageAttachment[];
+	readonly documents: readonly IBeamComposerMessageDocumentAttachment[];
+}
+
+export interface IBeamWebAttachmentInput {
+	readonly name?: string;
+	readonly mediaType?: string;
+	readonly data: string;
 }
 
 export class BeamComposerService extends vscode.Disposable {
@@ -214,16 +252,70 @@ export class BeamComposerService extends vscode.Disposable {
 		});
 	}
 
-	buildAttachmentContext(prompt?: string): string | undefined {
+	async addUploadedAttachments(uris: readonly vscode.Uri[]): Promise<IBeamComposerAttachmentState[]> {
+		const results: IBeamComposerAttachmentState[] = [];
+
+		for (const uri of uris) {
+			const attachment = await this.createUploadedAttachment(uri);
+			if (attachment) {
+				results.push(this.upsertAttachment(attachment));
+			}
+		}
+
+		return results;
+	}
+
+	addWebAttachments(items: readonly IBeamWebAttachmentInput[]): IBeamComposerAttachmentState[] {
+		const results: IBeamComposerAttachmentState[] = [];
+
+		for (const item of items) {
+			const attachment = this.createWebAttachment(item);
+			if (attachment) {
+				results.push(this.upsertAttachment(attachment));
+			}
+		}
+
+		return results;
+	}
+
+	resolveAttachments(prompt?: string): IBeamComposerResolvedAttachments {
 		const attachments = this.getContextAttachments(prompt);
 		if (!attachments.length) {
-			return undefined;
+			return {
+				context: undefined,
+				images: [],
+				documents: []
+			};
 		}
 
 		const blocks: string[] = [];
 		let used = 0;
+		const images: IBeamComposerMessageImageAttachment[] = [];
+		const documents: IBeamComposerMessageDocumentAttachment[] = [];
 
 		for (const attachment of attachments) {
+			if (attachment.kind === 'image' && attachment.binary) {
+				images.push({
+					type: 'image',
+					label: attachment.label,
+					mediaType: attachment.binary.mediaType,
+					data: attachment.binary.data
+				});
+			}
+
+			if (attachment.kind === 'pdf' && attachment.binary) {
+				documents.push({
+					type: 'document',
+					label: attachment.label,
+					mediaType: attachment.binary.mediaType,
+					data: attachment.binary.data
+				});
+			}
+
+			if (!attachment.content.trim()) {
+				continue;
+			}
+
 			const content = truncateText(attachment.content, MAX_ATTACHMENT_CONTEXT_CHARS);
 			if (blocks.length && used + content.length > MAX_TOTAL_ATTACHMENT_CONTEXT_CHARS) {
 				break;
@@ -233,10 +325,14 @@ export class BeamComposerService extends vscode.Disposable {
 			used += content.length;
 		}
 
-		return [
-			'\u5df2\u9644\u52a0\u5230\u5bf9\u8bdd\u7684\u4e0a\u4e0b\u6587\uff1a',
-			...blocks
-		].join('\n\n');
+		return {
+			context: blocks.length ? [
+				'\u5df2\u9644\u52a0\u5230\u5bf9\u8bdd\u7684\u4e0a\u4e0b\u6587\uff1a',
+				...blocks
+			].join('\n\n') : undefined,
+			images,
+			documents
+		};
 	}
 
 	private getContextAttachments(prompt?: string): readonly IBeamComposerAttachment[] {
@@ -271,6 +367,131 @@ export class BeamComposerService extends vscode.Disposable {
 	private fireState(): void {
 		this._onDidChangeState.fire(this.getState());
 	}
+
+	private async createUploadedAttachment(uri: vscode.Uri): Promise<IBeamComposerAttachmentDraft | undefined> {
+		const fileName = path.basename(uri.fsPath || uri.path);
+		if (!fileName) {
+			return undefined;
+		}
+
+		const fileData = await vscode.workspace.fs.readFile(uri);
+		const kind = classifyUploadedAttachment(fileName, fileData);
+		if (kind === 'unsupported') {
+			throw new Error(vscode.l10n.t('暂不支持将 {0} 作为 Beam 附件上传。当前支持图片、PDF 和文本文件。', fileName));
+		}
+
+		switch (kind) {
+			case 'image':
+				return this.createImageAttachment(uri, fileName, fileData);
+			case 'pdf':
+				return this.createPdfAttachment(uri, fileName, fileData);
+			case 'text':
+				return this.createTextAttachment(uri, fileName, fileData);
+			default:
+				return undefined;
+		}
+	}
+
+	private createWebAttachment(item: IBeamWebAttachmentInput): IBeamComposerAttachmentDraft | undefined {
+		const fileName = this.getWebAttachmentName(item);
+		const fileData = Buffer.from(item.data, 'base64');
+		const kind = classifyUploadedAttachment(fileName, fileData, item.mediaType);
+		if (kind === 'unsupported') {
+			throw new Error(vscode.l10n.t('暂不支持将 {0} 作为 Beam 附件上传。当前支持图片、PDF 和文本文件。', fileName));
+		}
+
+		const originalUri = `beam-upload:${encodeURIComponent(fileName)}`;
+		switch (kind) {
+			case 'image':
+				return this.createImageAttachment(vscode.Uri.parse(originalUri), fileName, fileData, item.mediaType);
+			case 'pdf':
+				return this.createPdfAttachment(vscode.Uri.parse(originalUri), fileName, fileData);
+			case 'text':
+				return this.createTextAttachment(vscode.Uri.parse(originalUri), fileName, fileData);
+			default:
+				return undefined;
+		}
+	}
+
+	private createImageAttachment(uri: vscode.Uri, fileName: string, fileData: Uint8Array, mediaTypeHint?: string): IBeamComposerAttachmentDraft {
+		const mediaType = mediaTypeHint || getImageMediaType(fileName) || 'image/png';
+		const sizeLabel = formatByteSize(fileData.byteLength);
+		return {
+			id: `image:${uri.toString()}`,
+			kind: 'image',
+			label: fileName,
+			detail: vscode.l10n.t('图片 · {0} · {1}', getAttachmentTypeLabel(fileName), sizeLabel),
+			preview: vscode.l10n.t('图片已附加，发送后 Beam 可直接查看这张图片。'),
+			content: [
+				`已附加图片：${fileName}`,
+				`类型：${mediaType}`,
+				`大小：${sizeLabel}`,
+				'请结合图片内容回答用户问题。'
+			].join('\n'),
+			originalUri: uri.toString(),
+			binary: {
+				mediaType,
+				data: Buffer.from(fileData).toString('base64'),
+				size: fileData.byteLength
+			}
+		};
+	}
+
+	private createPdfAttachment(uri: vscode.Uri, fileName: string, fileData: Uint8Array): IBeamComposerAttachmentDraft {
+		const sizeLabel = formatByteSize(fileData.byteLength);
+		return {
+			id: `pdf:${uri.toString()}`,
+			kind: 'pdf',
+			label: fileName,
+			detail: vscode.l10n.t('PDF · {0}', sizeLabel),
+			preview: vscode.l10n.t('PDF 已附加，发送后 Beam 可直接阅读文档内容。'),
+			content: [
+				`已附加 PDF：${fileName}`,
+				`大小：${sizeLabel}`,
+				'请结合文档内容回答用户问题。'
+			].join('\n'),
+			originalUri: uri.toString(),
+			binary: {
+				mediaType: 'application/pdf',
+				data: Buffer.from(fileData).toString('base64'),
+				size: fileData.byteLength
+			}
+		};
+	}
+
+	private createTextAttachment(uri: vscode.Uri, fileName: string, fileData: Uint8Array): IBeamComposerAttachmentDraft {
+		const text = Buffer.from(fileData).toString('utf8');
+		const content = truncateText(text, MAX_UPLOADED_TEXT_CHARS);
+		return {
+			id: `upload:${uri.toString()}`,
+			kind: 'upload',
+			label: fileName,
+			detail: vscode.l10n.t('上传文件 · {0} · {1}', getAttachmentTypeLabel(fileName), formatByteSize(fileData.byteLength)),
+			preview: truncateText(content.trim(), MAX_FILE_PREVIEW) || vscode.l10n.t('空文件'),
+			content: [
+				`已附加上传文件：${fileName}`,
+				'',
+				'```',
+				content,
+				'```'
+			].join('\n'),
+			originalUri: uri.toString()
+		};
+	}
+
+	private getWebAttachmentName(item: IBeamWebAttachmentInput): string {
+		const trimmed = item.name?.trim();
+		if (trimmed) {
+			return trimmed;
+		}
+
+		const extension = item.mediaType ? getPreferredExtensionForMediaType(item.mediaType) : undefined;
+		if (extension) {
+			return `attachment-${Date.now()}.${extension}`;
+		}
+
+		return `attachment-${Date.now()}.txt`;
+	}
 }
 
 function toAttachmentState(attachment: IBeamComposerAttachment): IBeamComposerAttachmentState {
@@ -281,7 +502,8 @@ function toAttachmentState(attachment: IBeamComposerAttachment): IBeamComposerAt
 		detail: attachment.detail,
 		preview: attachment.preview,
 		included: attachment.included,
-		contentLength: attachment.content.length
+		contentLength: attachment.content.length,
+		originalUri: attachment.originalUri
 	};
 }
 
