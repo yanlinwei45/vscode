@@ -15,6 +15,8 @@ const MAX_ATTACHMENT_CONTEXT_CHARS = 7000;
 const MAX_TOTAL_ATTACHMENT_CONTEXT_CHARS = 12000;
 const SELECTION_CONTEXT_PREVIEW_LINE_COUNT = 2;
 const MAX_UPLOADED_TEXT_CHARS = 12000;
+const MAX_BINARY_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_BINARY_ATTACHMENT_BYTES = 24 * 1024 * 1024;
 
 type BeamComposerAttachmentKind = 'selection' | 'file' | 'problems' | 'upload' | 'image' | 'pdf';
 
@@ -22,6 +24,7 @@ interface IBeamAttachmentBinaryPayload {
 	readonly mediaType: string;
 	readonly data: string;
 	readonly size: number;
+	readonly previewUrl?: string;
 }
 
 interface IBeamComposerAttachment {
@@ -47,6 +50,7 @@ export interface IBeamComposerAttachmentState {
 	readonly included: boolean;
 	readonly contentLength: number;
 	readonly originalUri?: string;
+	readonly previewUrl?: string;
 }
 
 interface IBeamComposerAttachmentReference {
@@ -350,6 +354,8 @@ export class BeamComposerService extends vscode.Disposable {
 	}
 
 	private upsertAttachment(attachment: IBeamComposerAttachmentDraft): IBeamComposerAttachmentState {
+		this.assertAttachmentWithinLimits(attachment);
+		this.assertTotalBinarySizeWithinLimits(attachment);
 		this.attachments = [
 			{
 				...attachment,
@@ -432,7 +438,8 @@ export class BeamComposerService extends vscode.Disposable {
 			binary: {
 				mediaType,
 				data: Buffer.from(fileData).toString('base64'),
-				size: fileData.byteLength
+				size: fileData.byteLength,
+				previewUrl: `data:${mediaType};base64,${Buffer.from(fileData).toString('base64')}`
 			}
 		};
 	}
@@ -492,6 +499,31 @@ export class BeamComposerService extends vscode.Disposable {
 
 		return `attachment-${Date.now()}.txt`;
 	}
+
+	private assertAttachmentWithinLimits(attachment: IBeamComposerAttachmentDraft): void {
+		if (!attachment.binary) {
+			return;
+		}
+
+		if (attachment.binary.size > MAX_BINARY_ATTACHMENT_BYTES) {
+			throw new Error(vscode.l10n.t('{0} 过大，当前单个图片/PDF 附件上限是 {1}。', attachment.label, formatByteSize(MAX_BINARY_ATTACHMENT_BYTES)));
+		}
+	}
+
+	private assertTotalBinarySizeWithinLimits(nextAttachment: IBeamComposerAttachmentDraft): void {
+		const nextSize = nextAttachment.binary?.size ?? 0;
+		if (!nextSize) {
+			return;
+		}
+
+		const currentSize = this.attachments
+			.filter(attachment => attachment.id !== nextAttachment.id)
+			.reduce((total, attachment) => total + (attachment.binary?.size ?? 0), 0);
+
+		if (currentSize + nextSize > MAX_TOTAL_BINARY_ATTACHMENT_BYTES) {
+			throw new Error(vscode.l10n.t('当前对话中的图片/PDF 附件总量过大，合计上限是 {0}。请移除一些附件后再试。', formatByteSize(MAX_TOTAL_BINARY_ATTACHMENT_BYTES)));
+		}
+	}
 }
 
 function toAttachmentState(attachment: IBeamComposerAttachment): IBeamComposerAttachmentState {
@@ -503,7 +535,8 @@ function toAttachmentState(attachment: IBeamComposerAttachment): IBeamComposerAt
 		preview: attachment.preview,
 		included: attachment.included,
 		contentLength: attachment.content.length,
-		originalUri: attachment.originalUri
+		originalUri: attachment.originalUri,
+		previewUrl: attachment.binary?.previewUrl
 	};
 }
 

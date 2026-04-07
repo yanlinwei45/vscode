@@ -95,6 +95,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					}
 				} catch (error) {
 					const text = error instanceof Error ? error.message : vscode.l10n.t('附加文件失败。');
+					if (this.view) {
+						void this.view.webview.postMessage({ type: 'showComposerStatus', value: text });
+					} else {
+						this.pendingStatusMessage = text;
+					}
 					void vscode.window.showErrorMessage(text);
 				}
 				return;
@@ -225,6 +230,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const historyEmptyLabel = vscode.l10n.t('\u6682\u65e0\u5386\u53f2\u5bf9\u8bdd');
 		const composerHint = vscode.l10n.t('\u56de\u8f66\u53d1\u9001\uff0cShift+Enter \u6362\u884c');
 		const dropHint = vscode.l10n.t('\u62d6\u62fd\u6587\u4ef6/\u56fe\u7247\u5230\u8fd9\u91cc\uff0c\u6216\u76f4\u63a5\u7c98\u8d34\u622a\u56fe');
+		const attachmentsAddedLabel = vscode.l10n.t('已附加 {0} 个附件');
 		return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -586,7 +592,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			display: flex;
 			align-items: center;
 			gap: 6px;
-			max-width: 220px;
+			max-width: 260px;
 			padding: 5px 8px;
 			border-radius: 999px;
 			border: 1px solid color-mix(in srgb, var(--vscode-button-background) 22%, var(--vscode-panel-border));
@@ -619,11 +625,20 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			text-overflow: ellipsis;
 			white-space: nowrap;
 		}
+		.attachment-thumb {
+			width: 26px;
+			height: 26px;
+			border-radius: 8px;
+			object-fit: cover;
+			flex: 0 0 auto;
+			border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 80%, transparent);
+			background: color-mix(in srgb, var(--vscode-editor-background) 84%, transparent);
+		}
 		.attachment-meta {
 			font-size: 10px;
 			opacity: 0.68;
 			flex: 0 0 auto;
-			max-width: 80px;
+			max-width: 96px;
 			overflow: hidden;
 			text-overflow: ellipsis;
 			white-space: nowrap;
@@ -897,6 +912,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			composerDropOverlayEl.classList.toggle('active', active);
 		}
 
+		function hasFileTransfer(event) {
+			const types = Array.from(event.dataTransfer?.types || []);
+			return types.includes('Files');
+		}
+
 		async function readFileAsBase64(file) {
 			const buffer = await file.arrayBuffer();
 			const bytes = new Uint8Array(buffer);
@@ -925,6 +945,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			if (items.length) {
 				vscode.postMessage({ type: 'addWebAttachments', items });
+				showComposerStatus(${JSON.stringify(attachmentsAddedLabel)}.replace('{0}', String(items.length)));
 			}
 		}
 
@@ -1149,6 +1170,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				kind.className = 'attachment-kind';
 				kind.textContent = attachmentKindLabels[attachment.kind] || attachment.kind;
 				item.appendChild(kind);
+
+				if (attachment.kind === 'image' && attachment.previewUrl) {
+					const thumb = document.createElement('img');
+					thumb.className = 'attachment-thumb';
+					thumb.src = attachment.previewUrl;
+					thumb.alt = attachment.label;
+					item.appendChild(thumb);
+				}
 
 				const label = document.createElement('div');
 				label.className = 'composer-attachment-label';
@@ -1395,7 +1424,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			syncPromptHeight();
 		});
 		composerShellEl.addEventListener('dragenter', event => {
-			if (state.chat.busy) {
+			if (state.chat.busy || !hasFileTransfer(event)) {
 				return;
 			}
 
@@ -1404,7 +1433,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			setDragActive(true);
 		});
 		composerShellEl.addEventListener('dragover', event => {
-			if (state.chat.busy) {
+			if (state.chat.busy || !hasFileTransfer(event)) {
 				return;
 			}
 
@@ -1413,7 +1442,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			setDragActive(true);
 		});
 		composerShellEl.addEventListener('dragleave', event => {
-			if (state.chat.busy) {
+			if (state.chat.busy || !hasFileTransfer(event)) {
 				return;
 			}
 
@@ -1424,7 +1453,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			}
 		});
 		composerShellEl.addEventListener('drop', async event => {
-			if (state.chat.busy) {
+			if (state.chat.busy || !hasFileTransfer(event)) {
 				return;
 			}
 

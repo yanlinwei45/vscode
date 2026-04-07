@@ -33,5 +33,6 @@ suite('Beam Attachment Utils', () => {
 		assert.strictEqual(formatByteSize(512), '512 B');
 		assert.strictEqual(formatByteSize(1536), '1.5 KB');
 		assert.strictEqual(formatByteSize(2 * 1024 * 1024), '2 MB');
+		assert.strictEqual(formatByteSize(10 * 1024 * 1024), '10 MB');
 	});
 });
