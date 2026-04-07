@@ -229,6 +229,7 @@ export class BeamService extends vscode.Disposable {
 	private activeSessionId: string | undefined;
 	private selectedModel: string | undefined;
 	private codexOpenAIConfiguration: ICodexOpenAIConfiguration | undefined;
+	private activeRequestCancellation = new vscode.CancellationTokenSource();
 
 	constructor(
 		private readonly storage: vscode.Memento,
@@ -333,29 +334,39 @@ export class BeamService extends vscode.Disposable {
 		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002') }];
 		this.updateActiveSessionTitleFromPrompt(trimmed);
 		this.busy = true;
+		this.activeRequestCancellation.dispose();
+		this.activeRequestCancellation = new vscode.CancellationTokenSource();
 		this.persistState();
 		this._onDidChangeState.fire(this.getState());
 
 		try {
-			await vscode.window.withProgress({
-				location: vscode.ProgressLocation.Notification,
-				title: vscode.l10n.t('Beam \u6b63\u5728\u601d\u8003...'),
-				cancellable: true
-			}, async (progress, token) => {
-				const content = await this.requestAssistantResponse(progress, token, attachments);
-				this.messages = [...this.messages, { role: 'assistant', content }];
-				this.persistState();
-			});
+			const content = await this.requestAssistantResponse(undefined, this.activeRequestCancellation.token, attachments);
+			this.messages = [...this.messages, { role: 'assistant', content }];
+			this.persistState();
 		} catch (error) {
 			const message = error instanceof Error ? error.message : vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\u3002');
+			if (this.activeRequestCancellation.token.isCancellationRequested && /已取消/.test(message)) {
+				this.log(vscode.l10n.t('Beam 请求已由用户取消。'));
+				return;
+			}
 			this.log(vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff1a{0}', message));
 			this.messages = [...this.messages, { role: 'assistant', content: `\u9519\u8bef\uff1a${message}` }];
 			this.persistState();
 		} finally {
 			this.busy = false;
 			this.pendingToolNames = [];
+			this.activeRequestCancellation.dispose();
+			this.activeRequestCancellation = new vscode.CancellationTokenSource();
 			this._onDidChangeState.fire(this.getState());
 		}
+	}
+
+	cancelActiveRequest(): void {
+		if (!this.busy || this.activeRequestCancellation.token.isCancellationRequested) {
+			return;
+		}
+
+		this.activeRequestCancellation.cancel();
 	}
 
 	showOutput(preserveFocus?: boolean): void {

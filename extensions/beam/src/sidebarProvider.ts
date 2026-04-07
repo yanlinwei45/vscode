@@ -115,6 +115,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				return;
 			}
 
+			if (message.type === 'cancel') {
+				this.service.cancelActiveRequest();
+				return;
+			}
+
 			if (message.type === 'clearAttachments') {
 				this.composerService.clear();
 				return;
@@ -202,6 +207,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const placeholder = vscode.l10n.t('\u8f93\u5165\u9700\u6c42\uff0c\u6bd4\u5982\uff1a\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u3001\u4fee\u590d\u9519\u8bef\u3001\u91cd\u6784\u5f53\u524d\u6587\u4ef6...');
 		const emptyState = vscode.l10n.t('\u4ece\u8fd9\u91cc\u76f4\u63a5\u5f00\u59cb\u4e00\u6bb5\u65b0\u5bf9\u8bdd\u3002');
 		const send = vscode.l10n.t('\u53d1\u9001');
+		const stop = vscode.l10n.t('\u505c\u6b62');
 		const attachLabel = vscode.l10n.t('\u4e0a\u4f20');
 		const previewInsertLabel = vscode.l10n.t('\u9884\u89c8\u63d2\u5165');
 		const previewReplaceLabel = vscode.l10n.t('\u9884\u89c8\u66ff\u6362');
@@ -476,17 +482,22 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			gap: 8px;
 		}
 		.model-select {
-			width: 158px;
-			max-width: 42vw;
+			width: auto;
+			min-width: 0;
+			max-width: min(132px, 34vw);
 			border-radius: 10px;
 			border: 0;
 			background: transparent;
 			color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
-			padding: 7px 6px 7px 0;
+			padding: 7px 2px 7px 0;
 			font: inherit;
 			font-size: 12px;
 			font-weight: 600;
 			outline: none;
+			justify-self: start;
+			appearance: none;
+			-webkit-appearance: none;
+			text-overflow: ellipsis;
 		}
 		.model-select:hover {
 			background: color-mix(in srgb, var(--vscode-editor-background) 72%, transparent);
@@ -507,6 +518,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		}
 		.icon-button.secondary {
 			background: color-mix(in srgb, var(--vscode-editor-background) 85%, transparent);
+		}
+		#send.stop {
+			background: color-mix(in srgb, var(--vscode-errorForeground) 26%, var(--vscode-button-background));
 		}
 		#attach {
 			border: 0;
@@ -838,10 +852,10 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					<div id="composerAttachments" class="composer-attachments"></div>
 					<textarea id="prompt" placeholder="${escapeHtml(placeholder)}"></textarea>
 					<div class="composer-footer">
-						<select id="modelSelect" class="model-select"></select>
 						<div class="composer-actions">
 							<button id="attach" class="secondary icon-button" title="${escapeHtml(attachLabel)}">+</button>
 						</div>
+						<select id="modelSelect" class="model-select"></select>
 						<div class="composer-meta">
 							<div id="composerStatus" class="composer-status"></div>
 							<div class="composer-hint">${escapeHtml(composerHint)}</div>
@@ -1421,9 +1435,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			renderAttachments();
 			renderProposal();
 			renderMessages();
-			sendEl.disabled = state.chat.busy;
+			sendEl.disabled = false;
 			attachEl.disabled = state.chat.busy;
-			sendEl.textContent = state.chat.busy ? '…' : '↑';
+			sendEl.textContent = state.chat.busy ? '■' : '↑';
+			sendEl.title = state.chat.busy ? ${JSON.stringify(stop)} : ${JSON.stringify(send)};
+			sendEl.classList.toggle('stop', state.chat.busy);
 			vscode.setState(state);
 		}
 
@@ -1441,7 +1457,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			syncPromptHeight();
 		}
 
-		sendEl.addEventListener('click', send);
+		sendEl.addEventListener('click', () => {
+			if (state.chat.busy) {
+				vscode.postMessage({ type: 'cancel' });
+				return;
+			}
+
+			send();
+		});
 		attachEl.addEventListener('click', () => {
 			if (state.chat.busy) {
 				return;
