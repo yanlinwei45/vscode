@@ -15,6 +15,7 @@ suite('Beam Prompt Policy', () => {
 		assert.ok(prompt.includes(DEFAULT_SYSTEM_PROMPT));
 		assert.ok(prompt.includes(PROPOSAL_ONLY_POLICY));
 		assert.ok(prompt.includes('run_command 只能用于只读检查'));
+		assert.ok(prompt.includes('没有选区时对当前文件生成整文件替换提议'));
 	});
 
 	test('appends proposal-only policy to configured prompt', () => {

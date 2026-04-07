@@ -157,7 +157,7 @@ export class BeamToolService {
 					type: 'object',
 					properties: {
 						code: { type: 'string', description: '\u8981\u5e94\u7528\u7684\u4ee3\u7801\u3002' },
-						mode: { type: 'string', enum: ['insert', 'replace'], description: '\u662f\u5728\u5149\u6807\u5904\u63d2\u5165\uff0c\u8fd8\u662f\u66ff\u6362\u5f53\u524d\u9009\u533a\u3002' }
+						mode: { type: 'string', enum: ['insert', 'replace'], description: '\u662f\u5728\u5149\u6807\u5904\u63d2\u5165\uff0c\u8fd8\u662f\u66ff\u6362\u5f53\u524d\u9009\u533a\uff08\u82e5\u6ca1\u6709\u9009\u533a\uff0creplace \u4f1a\u5bf9\u5f53\u524d\u6587\u4ef6\u751f\u6210\u6574\u6587\u66ff\u6362\u63d0\u6848\uff09\u3002' }
 					},
 					required: ['code', 'mode']
 				}

@@ -161,11 +161,6 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			return;
 		}
 
-		if (mode === 'replace' && editor.selections.every(selection => selection.isEmpty)) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('请先选中要替换的文本，再创建编辑提议。'));
-			return;
-		}
-
 		const selection = editor.selection.isEmpty ? undefined : editor.selection;
 		const originalUri = editor.document.uri;
 		const originalText = editor.document.getText();

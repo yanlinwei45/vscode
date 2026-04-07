@@ -19,11 +19,15 @@ export function applyProposalTextToContent(
 		return `${text.slice(0, insertOffset)}${code}${text.slice(insertOffset)}`;
 	}
 
-	let nextText = text;
 	const orderedSelections = [...selections]
 		.filter(selection => selection.start < selection.end)
 		.sort((a, b) => b.start - a.start);
 
+	if (!orderedSelections.length) {
+		return code;
+	}
+
+	let nextText = text;
 	for (const selection of orderedSelections) {
 		nextText = `${nextText.slice(0, selection.start)}${code}${nextText.slice(selection.end)}`;
 	}

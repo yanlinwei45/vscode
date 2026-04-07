@@ -35,4 +35,11 @@ suite('Beam Proposal Text', () => {
 
 		assert.strictEqual(actual, 'alpha Beam');
 	});
+
+	test('replaces the full document when no selection exists', () => {
+		const text = 'alpha beta';
+		const actual = applyProposalTextToContent(text, 'const next = true;\n', 'replace', 0, []);
+
+		assert.strictEqual(actual, 'const next = true;\n');
+	});
 });
