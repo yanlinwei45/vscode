@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { getEditorLabel, getPreferredCodeEditor } from './editorContext';
 import { InlineDiffDecorator } from './inlineDiffDecorator';
+import { applyProposalTextToContent } from './proposalText';
 
 const PROPOSAL_SCHEME = 'beam-proposal';
 
@@ -146,6 +147,7 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}
 
 		this.clearAllInlineDecorations();
+		void this.closeAllProposalTabs();
 		this.proposals.clear();
 		this.proposalOrder.length = 0;
 		this.activeProposalId = undefined;
@@ -368,6 +370,8 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			this.inlineDiffDecorator.clearDecorations(activeEditor);
 		}
 
+		await this.closeTabsForProposal(proposal.id);
+
 		this.proposals.delete(id);
 		const index = this.proposalOrder.indexOf(id);
 		if (index >= 0) {
@@ -430,6 +434,27 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}
 	}
 
+	private async closeAllProposalTabs(): Promise<void> {
+		await this.closeMatchingTabs(tab => isBeamProposalTab(tab.input));
+	}
+
+	private async closeTabsForProposal(id: string): Promise<void> {
+		const proposalUri = this.getProposalUri(id);
+		await this.closeMatchingTabs(tab => isBeamProposalTab(tab.input, proposalUri));
+	}
+
+	private async closeMatchingTabs(predicate: (tab: vscode.Tab) => boolean): Promise<void> {
+		const tabs = vscode.window.tabGroups.all
+			.flatMap(group => group.tabs)
+			.filter(predicate);
+
+		if (!tabs.length) {
+			return;
+		}
+
+		await vscode.window.tabGroups.close(tabs, true);
+	}
+
 	private fireState(): void {
 		this._onDidChangeState.fire(this.getState());
 	}
@@ -465,28 +490,33 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 
 function applyProposalText(editor: vscode.TextEditor, code: string, mode: 'replace' | 'insert'): string {
 	const document = editor.document;
-	if (mode === 'insert') {
-		const selection = editor.selection;
-		const offset = document.offsetAt(selection.active);
-		const text = document.getText();
-		return `${text.slice(0, offset)}${code}${text.slice(offset)}`;
-	}
-
-	let text = document.getText();
-	const orderedSelections = [...editor.selections]
-		.filter(selection => !selection.isEmpty)
-		.sort((a, b) => document.offsetAt(b.start) - document.offsetAt(a.start));
-
-	for (const selection of orderedSelections) {
-		const start = document.offsetAt(selection.start);
-		const end = document.offsetAt(selection.end);
-		text = `${text.slice(0, start)}${code}${text.slice(end)}`;
-	}
-
-	return text;
+	return applyProposalTextToContent(
+		document.getText(),
+		code,
+		mode,
+		document.offsetAt(editor.selection.active),
+		editor.selections.map(selection => ({
+			start: document.offsetAt(selection.start),
+			end: document.offsetAt(selection.end)
+		}))
+	);
 }
 
 function fullDocumentRange(document: vscode.TextDocument): vscode.Range {
 	const lastLine = document.lineAt(document.lineCount - 1);
 	return new vscode.Range(new vscode.Position(0, 0), lastLine.range.end);
+}
+
+function isBeamProposalTab(input: vscode.Tab['input'], proposalUri?: vscode.Uri): boolean {
+	if (input instanceof vscode.TabInputText) {
+		return input.uri.scheme === PROPOSAL_SCHEME
+			&& (!proposalUri || input.uri.toString() === proposalUri.toString());
+	}
+
+	if (input instanceof vscode.TabInputTextDiff) {
+		return input.modified.scheme === PROPOSAL_SCHEME
+			&& (!proposalUri || input.modified.toString() === proposalUri.toString());
+	}
+
+	return false;
 }

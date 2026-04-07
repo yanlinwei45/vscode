@@ -171,6 +171,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const acceptLabel = vscode.l10n.t('\u63a5\u53d7');
 		const rejectLabel = vscode.l10n.t('\u62d2\u7edd');
 		const reopenProposalLabel = vscode.l10n.t('\u6253\u5f00\u5bf9\u6bd4');
+		const focusProposalLabel = vscode.l10n.t('\u5b9a\u4f4d\u5230\u7f16\u8f91\u5668');
 		const nextProposalLabel = vscode.l10n.t('\u4e0b\u4e00\u4e2a\u6587\u4ef6');
 		const previousProposalLabel = vscode.l10n.t('\u4e0a\u4e00\u4e2a\u6587\u4ef6');
 		const toolSummaryLabel = vscode.l10n.t('\u540e\u53f0\u6267\u884c');
@@ -686,6 +687,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					<button id="previousProposal" class="secondary">${escapeHtml(previousProposalLabel)}</button>
 					<button id="nextProposal" class="secondary">${escapeHtml(nextProposalLabel)}</button>
 					<button id="reopenProposal" class="secondary">${escapeHtml(reopenProposalLabel)}</button>
+					<button id="focusProposal" class="secondary">${escapeHtml(focusProposalLabel)}</button>
 					<button id="rejectProposal" class="secondary">${escapeHtml(rejectLabel)}</button>
 					<button id="acceptProposal">${escapeHtml(acceptLabel)}</button>
 				</div>
@@ -725,6 +727,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const previousProposalEl = document.getElementById('previousProposal');
 		const nextProposalEl = document.getElementById('nextProposal');
 		const reopenProposalEl = document.getElementById('reopenProposal');
+		const focusProposalEl = document.getElementById('focusProposal');
 		const acceptProposalEl = document.getElementById('acceptProposal');
 		const rejectProposalEl = document.getElementById('rejectProposal');
 		const previewInsertCommand = 'beam.previewInsertCodeBlock';
@@ -1055,6 +1058,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				previousProposalEl.disabled = true;
 				nextProposalEl.disabled = true;
 				reopenProposalEl.disabled = true;
+				focusProposalEl.disabled = true;
 				return;
 			}
 
@@ -1089,6 +1093,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			previousProposalEl.disabled = !state.proposal.hasMultipleFiles;
 			nextProposalEl.disabled = !state.proposal.hasMultipleFiles;
 			reopenProposalEl.disabled = !state.proposal.reopenable;
+			focusProposalEl.disabled = !state.proposal.active;
 		}
 
 		function renderMessages() {
@@ -1209,6 +1214,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		});
 		reopenProposalEl.addEventListener('click', () => {
 			vscode.postMessage({ type: 'command', command: 'beam.reopenProposal' });
+		});
+		focusProposalEl.addEventListener('click', () => {
+			vscode.postMessage({ type: 'command', command: 'beam.focusActiveProposal' });
 		});
 		previousProposalEl.addEventListener('click', () => {
 			vscode.postMessage({ type: 'command', command: 'beam.previousProposal' });
