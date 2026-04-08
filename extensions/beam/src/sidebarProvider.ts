@@ -193,17 +193,29 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 		void this.view.webview.postMessage({
 			type: 'state',
-			value: {
-				chat: this.service.getState(),
-				composer: this.composerService.getState(),
-				context: this.contextService.getState(),
-				proposal: this.proposalService.getState()
-			}
+			value: this.getWebviewState()
+		}).then(undefined, error => {
+			console.error('[Beam] Failed to post sidebar state to webview.', error);
+		});
+	}
+
+	private getWebviewState(): {
+		chat: ReturnType<BeamService['getState']>;
+		composer: ReturnType<BeamComposerService['getState']>;
+		context: ReturnType<BeamContextService['getState']>;
+		proposal: ReturnType<BeamProposalService['getState']>;
+	} {
+		return toWebviewSerializable({
+			chat: this.service.getState(),
+			composer: this.composerService.getState(),
+			context: this.contextService.getState(),
+			proposal: this.proposalService.getState()
 		});
 	}
 
 	private getHtml(webview: vscode.Webview): string {
 		const nonce = createNonce();
+		const initialState = escapeJsonForInlineScript(JSON.stringify(this.getWebviewState()));
 		const placeholder = vscode.l10n.t('\u8f93\u5165\u9700\u6c42\uff0c\u6bd4\u5982\uff1a\u89e3\u91ca\u8fd9\u6bb5\u4ee3\u7801\u3001\u4fee\u590d\u9519\u8bef\u3001\u91cd\u6784\u5f53\u524d\u6587\u4ef6...');
 		const emptyState = vscode.l10n.t('\u4ece\u8fd9\u91cc\u76f4\u63a5\u5f00\u59cb\u4e00\u6bb5\u65b0\u5bf9\u8bdd\u3002');
 		const send = vscode.l10n.t('\u53d1\u9001');
@@ -217,18 +229,19 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const focusProposalLabel = vscode.l10n.t('\u5b9a\u4f4d\u5230\u7f16\u8f91\u5668');
 		const nextProposalLabel = vscode.l10n.t('\u4e0b\u4e00\u4e2a\u6587\u4ef6');
 		const previousProposalLabel = vscode.l10n.t('\u4e0a\u4e00\u4e2a\u6587\u4ef6');
-		const toolSummaryLabel = vscode.l10n.t('\u540e\u53f0\u6267\u884c');
-		const toolDetailsLabel = vscode.l10n.t('\u5c55\u5f00\u8be6\u60c5');
-		const toolCollapseLabel = vscode.l10n.t('\u6536\u8d77\u8be6\u60c5');
 		const toolCountLabel = vscode.l10n.t('\u5171 {0} \u6b65');
 		const runningToolLabel = vscode.l10n.t('\u6b63\u5728\u5904\u7406\uff1a{0}');
+		const workingLabel = vscode.l10n.t('\u6b63\u5728\u5de5\u4f5c');
+		const thinkingSummaryLabel = vscode.l10n.t('\u601d\u8003\u4e0e\u6267\u884c\u8f68\u8ff9');
+		const expandDetailsLabel = vscode.l10n.t('\u5c55\u5f00\u8be6\u60c5');
+		const thinkingStepLabel = vscode.l10n.t('\u5206\u6790');
+		const toolStepLabel = vscode.l10n.t('\u52a8\u4f5c');
 		const proposalInsertModeLabel = vscode.l10n.t('\u63d2\u5165');
 		const proposalReplaceModeLabel = vscode.l10n.t('\u66ff\u6362');
 		const proposalFileModeLabel = vscode.l10n.t('\u6587\u4ef6');
 		const fallbackPrompt = vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002');
 		const assistantLabel = vscode.l10n.t('\u667a\u80fd\u4f53');
 		const userLabel = vscode.l10n.t('\u4f60');
-		const backgroundLabel = vscode.l10n.t('\u540e\u53f0');
 		const preparingLabel = vscode.l10n.t('\u51c6\u5907\u4e2d');
 		const toolLabelFallback = vscode.l10n.t('\u540e\u53f0\u5de5\u5177');
 		const titleText = vscode.l10n.t('Beam');
@@ -239,7 +252,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const composerHint = vscode.l10n.t('\u56de\u8f66\u53d1\u9001\uff0cShift+Enter \u6362\u884c');
 		const dropHint = vscode.l10n.t('\u62d6\u62fd\u6587\u4ef6/\u56fe\u7247\u5230\u8fd9\u91cc\uff0c\u6216\u76f4\u63a5\u7c98\u8d34\u622a\u56fe');
 		const attachmentsAddedLabel = vscode.l10n.t('已附加 {0} 个附件');
-		return `<!DOCTYPE html>
+		return String.raw`<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 	<meta charset="UTF-8">
@@ -377,6 +390,16 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			padding-left: 14px;
 			margin-right: 10px;
 		}
+		.message.thinking {
+			background:
+				linear-gradient(180deg, color-mix(in srgb, var(--vscode-button-background) 8%, transparent), transparent 58%),
+				color-mix(in srgb, var(--vscode-editor-background) 84%, transparent);
+			box-shadow: none;
+			position: relative;
+			padding-left: 14px;
+			margin-right: 10px;
+			border-style: dashed;
+		}
 		.message.tool::before {
 			content: '';
 			position: absolute;
@@ -384,6 +407,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			width: 3px;
 			border-radius: 16px 0 0 16px;
 			background: color-mix(in srgb, var(--vscode-textLink-foreground) 72%, transparent);
+		}
+		.message.thinking::before {
+			content: '';
+			position: absolute;
+			inset: 0 auto 0 0;
+			width: 3px;
+			border-radius: 16px 0 0 16px;
+			background: color-mix(in srgb, var(--vscode-button-background) 72%, transparent);
 		}
 		.message.pending {
 			border-style: dashed;
@@ -407,6 +438,54 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			white-space: pre-wrap;
 			word-break: break-word;
 		}
+		.content h1,
+		.content h2,
+		.content h3,
+		.content h4,
+		.content h5,
+		.content h6 {
+			margin: 0;
+			line-height: 1.35;
+			font-weight: 700;
+		}
+		.content h1 { font-size: 20px; }
+		.content h2 { font-size: 18px; }
+		.content h3 { font-size: 16px; }
+		.content h4,
+		.content h5,
+		.content h6 { font-size: 14px; }
+		.content ul,
+		.content ol {
+			margin: 0;
+			padding-left: 20px;
+			display: grid;
+			gap: 4px;
+		}
+		.content li {
+			line-height: 1.55;
+			word-break: break-word;
+		}
+		.content blockquote {
+			margin: 0;
+			padding: 2px 0 2px 12px;
+			border-left: 3px solid color-mix(in srgb, var(--vscode-textLink-foreground) 36%, transparent);
+			opacity: 0.88;
+			display: grid;
+			gap: 8px;
+		}
+		.content hr {
+			width: 100%;
+			border: 0;
+			border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 76%, transparent);
+			margin: 2px 0;
+		}
+		.content a {
+			color: var(--vscode-textLink-foreground);
+			text-decoration: none;
+		}
+		.content a:hover {
+			text-decoration: underline;
+		}
 		.content pre {
 			margin: 0;
 			padding: 11px 12px;
@@ -418,6 +497,26 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		.content code {
 			font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
 			font-size: 13px;
+		}
+		.content .inline-code {
+			display: inline-block;
+			padding: 1px 5px;
+			border-radius: 6px;
+			background: color-mix(in srgb, var(--vscode-editor-background) 88%, black 12%);
+			border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 80%, transparent);
+			white-space: break-spaces;
+		}
+		.content .code-block {
+			display: grid;
+			gap: 0;
+		}
+		.content .code-block-header {
+			padding: 7px 11px 0;
+			font-size: 11px;
+			font-weight: 700;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+			opacity: 0.68;
 		}
 		.tool-line {
 			display: flex;
@@ -464,6 +563,139 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			font-weight: 700;
 			margin-bottom: 6px;
 			opacity: 0.82;
+		}
+		.workflow-group {
+			display: grid;
+			gap: 8px;
+		}
+		.workflow-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+			flex-wrap: wrap;
+		}
+		.workflow-title {
+			font-size: 12px;
+			font-weight: 700;
+		}
+		.workflow-step-count {
+			font-size: 11px;
+			opacity: 0.72;
+		}
+		.workflow-summary {
+			cursor: pointer;
+			list-style: none;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+			padding: 0;
+		}
+		.workflow-summary::-webkit-details-marker {
+			display: none;
+		}
+		.workflow-summary::before {
+			content: '▸';
+			font-size: 11px;
+			opacity: 0.72;
+			transform: translateY(-1px);
+		}
+		.workflow-group[open] > .workflow-summary::before {
+			content: '▾';
+		}
+		.workflow-summary-copy {
+			display: grid;
+			gap: 2px;
+			min-width: 0;
+			flex: 1;
+		}
+		.workflow-summary-hint {
+			font-size: 11px;
+			opacity: 0.62;
+		}
+		.workflow-preview-list {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px;
+			margin-top: 4px;
+		}
+		.workflow-preview-chip {
+			border-radius: 999px;
+			padding: 3px 8px;
+			font-size: 11px;
+			border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 82%, transparent);
+			background: color-mix(in srgb, var(--vscode-editor-background) 78%, transparent);
+			opacity: 0.88;
+		}
+		.workflow-items {
+			display: grid;
+			gap: 8px;
+			margin-top: 8px;
+		}
+		.workflow-item {
+			padding: 9px 10px;
+			border-radius: 12px;
+			border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 78%, transparent);
+			background: color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
+		}
+		.workflow-item.thinking {
+			border-style: dashed;
+			background: color-mix(in srgb, var(--vscode-button-background) 6%, transparent);
+		}
+		.workflow-item-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+			margin-bottom: 6px;
+		}
+		.workflow-item-title {
+			font-size: 11px;
+			font-weight: 700;
+			opacity: 0.92;
+		}
+		.workflow-item-kind {
+			font-size: 10px;
+			opacity: 0.62;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+		.workflow-item-body {
+			display: grid;
+			gap: 8px;
+		}
+		.change-summary {
+			display: grid;
+			gap: 8px;
+			padding: 10px 12px;
+			border-radius: 10px;
+			background: color-mix(in srgb, var(--vscode-editorInfo-background) 78%, transparent);
+			border: 1px solid color-mix(in srgb, var(--vscode-editorInfo-border) 68%, transparent);
+		}
+		.change-summary-title {
+			font-size: 13px;
+			font-weight: 700;
+		}
+		.change-summary-meta {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px;
+		}
+		.change-summary-chip {
+			padding: 3px 8px;
+			border-radius: 999px;
+			font-size: 12px;
+			background: color-mix(in srgb, var(--vscode-badge-background) 22%, transparent);
+			color: var(--vscode-foreground);
+		}
+		.change-summary-status {
+			font-size: 12px;
+			color: var(--vscode-descriptionForeground);
+		}
+		.workflow-item-body > p,
+		.workflow-item-body pre {
+			margin: 0;
 		}
 		.composer {
 			border-top: 1px solid var(--vscode-panel-border);
@@ -898,6 +1130,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			create_edit_proposal: ${JSON.stringify(vscode.l10n.t('\u521b\u5efa\u7f16\u8f91\u63d0\u6848'))},
 			write_file: ${JSON.stringify(vscode.l10n.t('\u5199\u5165\u6587\u4ef6'))},
 			create_file: ${JSON.stringify(vscode.l10n.t('\u521b\u5efa\u6587\u4ef6'))},
+			delete_file: ${JSON.stringify(vscode.l10n.t('\u5220\u9664\u6587\u4ef6'))},
 			replace_in_file: ${JSON.stringify(vscode.l10n.t('\u66ff\u6362\u6587\u4ef6\u5185\u5bb9'))},
 			run_command: ${JSON.stringify(vscode.l10n.t('\u6267\u884c\u547d\u4ee4'))}
 		};
@@ -909,7 +1142,8 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			image: ${JSON.stringify(vscode.l10n.t('\u56fe\u7247'))},
 			pdf: ${JSON.stringify(vscode.l10n.t('PDF'))}
 		};
-		let state = { chat: { messages: [], busy: false, sessions: [], availableModels: [], selectedModel: '' }, composer: { attachments: [] }, context: { summary: [] }, proposal: { active: false } };
+		const initialState = JSON.parse(${JSON.stringify(initialState)});
+		let state = initialState;
 		let historyVisible = false;
 		let composerStatusTimer = undefined;
 		let dragDepth = 0;
@@ -1034,40 +1268,255 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			focusComposer();
 		}
 
-		function renderContent(container, text) {
+		function escapeHtmlContent(value) {
+			return String(value || '')
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
+				.replace(/'/g, '&#39;');
+		}
+
+		function renderInlineMarkdown(text) {
+			let html = escapeHtmlContent(text);
+			const backtick = String.fromCharCode(96);
+			const inlineCodePattern = new RegExp(backtick + '([^' + backtick + ']+)' + backtick, 'g');
+			html = html.replace(inlineCodePattern, '<code class="inline-code">$1</code>');
+			html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+			html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+			html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+			html = html.replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+			html = html.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
+			html = html.replace(/~~([^~]+)~~/g, '<s>$1</s>');
+			return html;
+		}
+
+		function flushParagraph(container, paragraphLines) {
+			if (!paragraphLines.length) {
+				return;
+			}
+
+			const p = document.createElement('p');
+			p.innerHTML = renderInlineMarkdown(paragraphLines.join('<br>'));
+			container.appendChild(p);
+			paragraphLines.length = 0;
+		}
+
+		function renderMarkdownBlocks(container, markdown) {
+			const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
 			const fence = String.fromCharCode(96, 96, 96);
-			const parts = String(text || '').split(fence);
-			for (let index = 0; index < parts.length; index++) {
-				if (!parts[index]) {
+			let index = 0;
+			let paragraphLines = [];
+
+			while (index < lines.length) {
+				const line = lines[index];
+				const trimmed = line.trim();
+
+				if (!trimmed) {
+					flushParagraph(container, paragraphLines);
+					index += 1;
 					continue;
 				}
 
-				if (index % 2 === 1) {
+				const fenceMatch = trimmed.startsWith(fence)
+					? [trimmed, trimmed.slice(fence.length)]
+					: undefined;
+				if (fenceMatch) {
+					flushParagraph(container, paragraphLines);
+					const codeLines = [];
+					const language = fenceMatch[1].trim();
+					index += 1;
+					while (index < lines.length && !lines[index].trim().startsWith(fence)) {
+						codeLines.push(lines[index]);
+						index += 1;
+					}
+					if (index < lines.length) {
+						index += 1;
+					}
+
+					const wrapper = document.createElement('div');
+					wrapper.className = 'code-block';
+					if (language) {
+						const header = document.createElement('div');
+						header.className = 'code-block-header';
+						header.textContent = language;
+						wrapper.appendChild(header);
+					}
 					const pre = document.createElement('pre');
 					const code = document.createElement('code');
-					const normalized = parts[index].replace(/^\\n+|\\n+$/g, '');
-					const lines = normalized.split('\\n');
-					const firstLine = lines[0] ?? '';
-					const body = /^[a-z0-9_+#.-]+$/i.test(firstLine) ? lines.slice(1).join('\\n') : normalized;
-					code.textContent = body;
+					code.textContent = codeLines.join('\n');
 					pre.appendChild(code);
-					container.appendChild(pre);
+					wrapper.appendChild(pre);
+					container.appendChild(wrapper);
 					continue;
 				}
 
-				const paragraphs = parts[index].split(/\\n{2,}/g).filter(Boolean);
-				for (const paragraph of paragraphs) {
-					const p = document.createElement('p');
-					p.textContent = paragraph;
-					container.appendChild(p);
+				const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+				if (headingMatch) {
+					flushParagraph(container, paragraphLines);
+					const level = Math.min(6, headingMatch[1].length);
+					const heading = document.createElement('h' + level);
+					heading.innerHTML = renderInlineMarkdown(headingMatch[2]);
+					container.appendChild(heading);
+					index += 1;
+					continue;
+				}
+
+				if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+					flushParagraph(container, paragraphLines);
+					container.appendChild(document.createElement('hr'));
+					index += 1;
+					continue;
+				}
+
+				const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+				if (quoteMatch) {
+					flushParagraph(container, paragraphLines);
+					const quoteLines = [];
+					while (index < lines.length) {
+						const current = lines[index];
+						const currentMatch = current.match(/^\s*>\s?(.*)$/);
+						if (!currentMatch) {
+							break;
+						}
+
+						quoteLines.push(currentMatch[1]);
+						index += 1;
+					}
+
+					const blockquote = document.createElement('blockquote');
+					renderMarkdownBlocks(blockquote, quoteLines.join('\n'));
+					container.appendChild(blockquote);
+					continue;
+				}
+
+				const unorderedMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+				if (unorderedMatch) {
+					flushParagraph(container, paragraphLines);
+					const list = document.createElement('ul');
+					while (index < lines.length) {
+						const currentMatch = lines[index].match(/^\s*[-*+]\s+(.*)$/);
+						if (!currentMatch) {
+							break;
+						}
+
+						const item = document.createElement('li');
+						item.innerHTML = renderInlineMarkdown(currentMatch[1]);
+						list.appendChild(item);
+						index += 1;
+					}
+					container.appendChild(list);
+					continue;
+				}
+
+				const orderedMatch = line.match(/^\s*\d+\.\s+(.*)$/);
+				if (orderedMatch) {
+					flushParagraph(container, paragraphLines);
+					const list = document.createElement('ol');
+					while (index < lines.length) {
+						const currentMatch = lines[index].match(/^\s*\d+\.\s+(.*)$/);
+						if (!currentMatch) {
+							break;
+						}
+
+						const item = document.createElement('li');
+						item.innerHTML = renderInlineMarkdown(currentMatch[1]);
+						list.appendChild(item);
+						index += 1;
+					}
+					container.appendChild(list);
+					continue;
+				}
+
+				paragraphLines.push(trimmed);
+				index += 1;
+			}
+
+			flushParagraph(container, paragraphLines);
+		}
+
+		function renderContent(container, text) {
+			const changeSummary = parseChangeSummary(text);
+			if (changeSummary) {
+				renderChangeSummary(container, changeSummary);
+				return;
+			}
+
+			renderMarkdownBlocks(container, text);
+		}
+
+		function parseChangeSummary(text) {
+			const source = String(text || '');
+			if (!source.includes('变更文件：') || !source.includes('状态：已修改编辑器内容')) {
+				return undefined;
+			}
+
+			const lines = source.split('\n').map(line => line.trim()).filter(Boolean);
+			const result = { intro: '', file: '', position: '', stats: '', status: '' };
+			for (const line of lines) {
+				if (line.startsWith('变更文件：')) {
+					result.file = line.slice('变更文件：'.length).trim();
+					continue;
+				}
+				if (line.startsWith('位置：')) {
+					result.position = line.slice('位置：'.length).trim();
+					continue;
+				}
+				if (line.startsWith('统计：')) {
+					result.stats = line.slice('统计：'.length).trim();
+					continue;
+				}
+				if (line.startsWith('状态：')) {
+					result.status = line.slice('状态：'.length).trim();
+					continue;
+				}
+				if (!result.intro) {
+					result.intro = line;
 				}
 			}
+
+			return result.file ? result : undefined;
+		}
+
+		function renderChangeSummary(container, summary) {
+			if (summary.intro) {
+				const intro = document.createElement('p');
+				intro.textContent = summary.intro;
+				container.appendChild(intro);
+			}
+
+			const card = document.createElement('div');
+			card.className = 'change-summary';
+
+			const title = document.createElement('div');
+			title.className = 'change-summary-title';
+			title.textContent = summary.file;
+			card.appendChild(title);
+
+			const meta = document.createElement('div');
+			meta.className = 'change-summary-meta';
+			for (const value of [summary.position, summary.stats].filter(Boolean)) {
+				const chip = document.createElement('div');
+				chip.className = 'change-summary-chip';
+				chip.textContent = value;
+				meta.appendChild(chip);
+			}
+			card.appendChild(meta);
+
+			if (summary.status) {
+				const status = document.createElement('div');
+				status.className = 'change-summary-status';
+				status.textContent = summary.status;
+				card.appendChild(status);
+			}
+
+			container.appendChild(card);
 		}
 
 		function createToolDisplayItems(messages) {
 			const displayItems = [];
 			for (const message of messages) {
-				if (message.role !== 'tool') {
+				if (message.role !== 'tool' && message.role !== 'thinking') {
 					displayItems.push({ type: 'message', message });
 					continue;
 				}
@@ -1091,69 +1540,82 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				.filter(Boolean);
 			return {
 				type: 'pending',
-				label: ${JSON.stringify(runningToolLabel)}.replace('{0}', labels.length ? labels.join('\u3001') : ${JSON.stringify(preparingLabel)})
+				label: state.chat.workingLabel || ${JSON.stringify(runningToolLabel)}.replace('{0}', labels.length ? labels.join('\u3001') : ${JSON.stringify(preparingLabel)})
 			};
 		}
 
 		function renderToolGroup(container, messages) {
-			const header = document.createElement('div');
-			header.className = 'tool-line';
+			const group = document.createElement('details');
+			group.className = 'workflow-group';
 
-			const summary = document.createElement('div');
-			summary.className = 'tool-summary';
-			summary.textContent = ${JSON.stringify(toolSummaryLabel)};
-			header.appendChild(summary);
+			const summary = document.createElement('summary');
+			summary.className = 'workflow-summary';
+
+			const summaryCopy = document.createElement('div');
+			summaryCopy.className = 'workflow-summary-copy';
+
+			const title = document.createElement('div');
+			title.className = 'workflow-title';
+			title.textContent = ${JSON.stringify(thinkingSummaryLabel)};
+			summaryCopy.appendChild(title);
+
+			const hint = document.createElement('div');
+			hint.className = 'workflow-summary-hint';
+			hint.textContent = ${JSON.stringify(expandDetailsLabel)};
+			summaryCopy.appendChild(hint);
+			summary.appendChild(summaryCopy);
 
 			const count = document.createElement('div');
-			count.className = 'tool-count';
+			count.className = 'workflow-step-count';
 			count.textContent = ${JSON.stringify(toolCountLabel)}.replace('{0}', String(messages.length));
-			header.appendChild(count);
-			container.appendChild(header);
+			summary.appendChild(count);
+			group.appendChild(summary);
 
-			const labels = [];
-			for (const message of messages) {
-				const label = message.metadata && message.metadata.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)};
-				if (!labels.includes(label)) {
-					labels.push(label);
-				}
-			}
-
-			const chips = document.createElement('div');
-			chips.className = 'tool-chip-list';
-			for (const label of labels) {
+			const preview = document.createElement('div');
+			preview.className = 'workflow-preview-list';
+			for (const message of messages.slice(0, 6)) {
 				const chip = document.createElement('div');
-				chip.className = 'tool-chip';
-				chip.textContent = label;
-				chips.appendChild(chip);
+				chip.className = 'workflow-preview-chip';
+				chip.textContent = message.metadata?.title || (message.metadata?.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : (message.role === 'thinking' ? ${JSON.stringify(thinkingStepLabel)} : ${JSON.stringify(toolLabelFallback)}));
+				preview.appendChild(chip);
 			}
-			container.appendChild(chips);
+			group.appendChild(preview);
 
-			const details = document.createElement('details');
-			details.className = 'tool-details';
-			const summaryEl = document.createElement('summary');
-			summaryEl.textContent = ${JSON.stringify(toolDetailsLabel)};
-			details.addEventListener('toggle', () => {
-				summaryEl.textContent = details.open ? ${JSON.stringify(toolCollapseLabel)} : ${JSON.stringify(toolDetailsLabel)};
-			});
-			details.appendChild(summaryEl);
-
+			const items = document.createElement('div');
+			items.className = 'workflow-items';
 			for (const message of messages) {
 				const item = document.createElement('div');
-				item.className = 'tool-detail-item';
+				item.className = message.role === 'thinking' ? 'workflow-item thinking' : 'workflow-item';
+
+				const itemHeader = document.createElement('div');
+				itemHeader.className = 'workflow-item-header';
 
 				const title = document.createElement('div');
-				title.className = 'tool-detail-title';
-				title.textContent = message.metadata && message.metadata.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)};
-				item.appendChild(title);
+				title.className = 'workflow-item-title';
+				if (message.role === 'thinking') {
+					title.textContent = message.metadata?.title || ${JSON.stringify(thinkingStepLabel)};
+				} else {
+					title.textContent = message.metadata?.title || (message.metadata && message.metadata.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)});
+				}
+				itemHeader.appendChild(title);
+
+				const kind = document.createElement('div');
+				kind.className = 'workflow-item-kind';
+				kind.textContent = message.role === 'thinking' ? ${JSON.stringify(thinkingStepLabel)} : ${JSON.stringify(toolStepLabel)};
+				itemHeader.appendChild(kind);
+
+				item.appendChild(itemHeader);
 
 				const body = document.createElement('div');
-				body.className = 'content';
+				body.className = 'workflow-item-body';
 				renderContent(body, message.content);
 				item.appendChild(body);
-				details.appendChild(item);
+
+				items.appendChild(item);
 			}
 
-			container.appendChild(details);
+			group.appendChild(items);
+			container.appendChild(group);
 		}
 
 		function renderSessions() {
@@ -1278,11 +1740,13 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			proposalEl.className = 'proposal active';
 			proposalModeEl.textContent = state.proposal.mode === 'replace'
 				? ${JSON.stringify(proposalReplaceModeLabel)}
+				: state.proposal.mode === 'delete'
+					? ${JSON.stringify(vscode.l10n.t('删除提议'))}
 				: state.proposal.mode === 'file'
 					? ${JSON.stringify(proposalFileModeLabel)}
 					: ${JSON.stringify(proposalInsertModeLabel)};
 			const progress = state.proposal.total ? ' (' + (state.proposal.currentIndex || 1) + '/' + state.proposal.total + ')' : '';
-			proposalBodyEl.textContent = (state.proposal.targetLabel || '') + progress;
+			proposalBodyEl.textContent = (state.proposal.targetLabel || '') + progress + (state.proposal.changeSummary ? ' · ' + state.proposal.changeSummary : '');
 			proposalFilesEl.innerHTML = '';
 			const files = state.proposal.files || [];
 			if (files.length > 1) {
@@ -1294,7 +1758,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				for (const file of files) {
 					const chip = document.createElement('button');
 					chip.className = file.isActive ? 'proposal-file-chip active' : 'proposal-file-chip';
-					chip.textContent = file.label;
+					chip.textContent = file.changeLabel ? (file.label + ' · ' + file.changeLabel) : file.label;
 					chip.addEventListener('click', () => {
 						vscode.postMessage({ type: 'command', command: 'beam.openPendingChange', args: [file.id] });
 					});
@@ -1331,7 +1795,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 					const role = document.createElement('div');
 					role.className = 'role';
-					role.textContent = ${JSON.stringify(backgroundLabel)};
+					role.textContent = ${JSON.stringify(workingLabel)};
 					pendingItem.appendChild(role);
 
 					const content = document.createElement('div');
@@ -1347,11 +1811,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 				if (displayItem.type === 'toolGroup') {
 					const toolItem = document.createElement('div');
-					toolItem.className = 'message tool';
+					toolItem.className = 'message thinking';
 
 					const role = document.createElement('div');
 					role.className = 'role';
-					role.textContent = ${JSON.stringify(backgroundLabel)};
+					role.textContent = ${JSON.stringify(workingLabel)};
 					toolItem.appendChild(role);
 
 					const content = document.createElement('div');
@@ -1585,8 +2049,8 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				context: previous.context || { summary: [] },
 				proposal: previous.proposal || { active: false }
 			};
-			render();
 		}
+		render();
 		syncPromptHeight();
 
 		vscode.postMessage({ type: 'ready' });
@@ -1630,4 +2094,17 @@ function joinContextBlocks(...parts: Array<string | undefined>): string | undefi
 		.map(part => part?.trim())
 		.filter((part): part is string => Boolean(part));
 	return normalized.length ? normalized.join('\n\n') : undefined;
+}
+
+function toWebviewSerializable<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function escapeJsonForInlineScript(value: string): string {
+	return value
+		.replace(/</g, '\\u003C')
+		.replace(/>/g, '\\u003E')
+		.replace(/&/g, '\\u0026')
+		.replace(/\u2028/g, '\\u2028')
+		.replace(/\u2029/g, '\\u2029');
 }

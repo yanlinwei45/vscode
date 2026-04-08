@@ -10,6 +10,7 @@
 	"command.sendCurrentFile": "将当前文件发送到 Beam",
 	"command.sendProblems": "将问题列表发送到 Beam",
 	"command.addAttachment": "向 Beam 添加文件或图片附件",
+	"command.configureAccessToken": "配置 Beam 访问令牌",
 	"command.showLogs": "显示 Beam 日志",
 	"command.insertCodeBlock": "为 Beam 代码块创建插入提议",
 	"command.replaceSelectionWithCodeBlock": "为 Beam 代码块创建替换提议",
@@ -33,7 +34,8 @@
 	"command.selectionActions": "对当前选区执行 Beam 操作",
 	"command.fixCurrentFile": "修复当前文件",
 	"config.systemPrompt.description": "发送给 Beam 的基础系统提示词。编辑提案与确认规则会由 Beam 额外追加。",
-	"config.provider.description": "选择 Beam 使用的后端提供方。anthropic 使用 Claude 接口，openai 使用 OpenAI Responses API。",
+	"config.provider.description": "选择 Beam 使用的后端提供方。anthropic 使用 Claude 接口，openai 使用 OpenAI Chat Completions 接口。",
 	"config.model.description": "发送到当前 Beam 提供方时默认使用的模型标识。Anthropic 可配 Claude 模型，OpenAI 可配任意可用模型 ID。",
-	"config.baseUrl.description": "覆盖当前 Beam 提供方的基础地址。Anthropic 留空时使用 ANTHROPIC_BASE_URL，OpenAI 留空时使用 OPENAI_BASE_URL。"
+	"config.baseUrl.description": "Beam 请求使用的基础地址。默认指向内置代理地址，你也可以手动修改。",
+	"config.accessToken.description": "Beam 的访问令牌需要在首次发送请求时手动输入，并安全保存在 VS Code 中。"
 }

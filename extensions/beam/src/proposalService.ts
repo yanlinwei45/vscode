@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { getEditorLabel, getPreferredCodeEditor } from './editorContext';
 import { InlineDiffDecorator } from './inlineDiffDecorator';
@@ -13,20 +14,40 @@ const PROPOSAL_SCHEME = 'beam-proposal';
 export interface IBeamProposalState {
 	readonly active: boolean;
 	readonly targetLabel?: string;
-	readonly mode?: 'replace' | 'insert' | 'file';
+	readonly mode?: 'replace' | 'insert' | 'file' | 'delete';
 	readonly reopenable?: boolean;
 	readonly currentIndex?: number;
 	readonly total?: number;
 	readonly files?: readonly IBeamProposalFileSummary[];
 	readonly hasMultipleFiles?: boolean;
+	readonly changeSummary?: string;
+	readonly applied?: boolean;
 }
 
 export interface IBeamProposalFileSummary {
 	readonly id: string;
-	readonly uri: vscode.Uri;
 	readonly label: string;
-	readonly mode: 'replace' | 'insert' | 'file';
+	readonly mode: 'replace' | 'insert' | 'file' | 'delete';
 	readonly isActive: boolean;
+	readonly firstChangeLine?: number;
+	readonly lastChangeLine?: number;
+	readonly changeLabel?: string;
+	readonly applied?: boolean;
+}
+
+export interface IBeamProposalChangeSummary {
+	readonly id: string;
+	readonly label: string;
+	readonly mode: 'replace' | 'insert' | 'file' | 'delete';
+	readonly firstChangeLine?: number;
+	readonly lastChangeLine?: number;
+	readonly addedLines: number;
+	readonly deletedLines: number;
+	readonly modifiedLines: number;
+	readonly changeCount: number;
+	readonly isNewFile: boolean;
+	readonly applied: boolean;
+	readonly summary: string;
 }
 
 export interface IBeamActiveProposal {
@@ -43,10 +64,15 @@ interface IBeamProposal {
 	readonly targetLabel: string;
 	readonly originalText: string;
 	readonly proposedText: string;
-	readonly mode: 'replace' | 'insert' | 'file';
+	readonly mode: 'replace' | 'insert' | 'file' | 'delete';
 	readonly isNewFile: boolean;
+	readonly applied: boolean;
 	readonly selection?: vscode.Range;
 	readonly firstChangeLine?: number;
+	readonly lastChangeLine?: number;
+	readonly addedLines: number;
+	readonly deletedLines: number;
+	readonly modifiedLines: number;
 }
 
 export class BeamProposalService implements vscode.TextDocumentContentProvider, vscode.Disposable {
@@ -85,14 +111,20 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			currentIndex: currentIndex >= 0 ? currentIndex + 1 : undefined,
 			total: this.proposalOrder.length || undefined,
 			hasMultipleFiles: this.proposalOrder.length > 1,
+			changeSummary: proposal ? this.toChangeSummary(proposal).summary : undefined,
+			applied: proposal?.applied,
 			files: this.proposalOrder.map(id => {
 				const item = this.proposals.get(id)!;
+				const summary = this.toChangeSummary(item);
 				return {
 					id,
-					uri: item.originalUri,
 					label: item.targetLabel,
 					mode: item.mode,
-					isActive: id === this.activeProposalId
+					isActive: id === this.activeProposalId,
+					firstChangeLine: summary.firstChangeLine,
+					lastChangeLine: summary.lastChangeLine,
+					changeLabel: summary.summary,
+					applied: item.applied
 				};
 			})
 		};
@@ -120,7 +152,7 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}
 
 		this.activeProposalId = proposal.id;
-		await this.showProposal(proposal, { preferDiff: true });
+		await this.showProposal(proposal, { preferDiff: proposal.mode === 'delete' });
 		this.fireState();
 	}
 
@@ -130,7 +162,7 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			return;
 		}
 
-		await this.showProposal(proposal, { preferDiff: false });
+		await this.showProposal(proposal, { preferDiff: proposal.mode === 'delete' });
 	}
 
 	async showNextProposal(): Promise<void> {
@@ -154,44 +186,77 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		this.fireState();
 	}
 
-	async createProposalFromCodeBlock(code: string, mode: 'replace' | 'insert'): Promise<void> {
+	async createProposalFromCodeBlock(code: string, mode: 'replace' | 'insert'): Promise<IBeamProposalChangeSummary> {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('请先打开一个文本编辑器，再创建 Beam 的编辑提议。'));
-			return;
+			throw new Error(vscode.l10n.t('请先打开一个文本编辑器，再创建 Beam 的编辑提议。'));
 		}
 
 		const selection = editor.selection.isEmpty ? undefined : editor.selection;
 		const originalUri = editor.document.uri;
 		const originalText = editor.document.getText();
 		const proposedText = applyProposalText(editor, code, mode);
-		await this.upsertProposal({
+		return this.upsertProposal({
 			originalUri,
 			targetLabel: getEditorLabel(originalUri),
 			originalText,
 			proposedText,
 			mode,
 			isNewFile: false,
+			applied: false,
+			addedLines: 0,
+			deletedLines: 0,
+			modifiedLines: 0,
 			selection
-		}, { openDiff: true, preserveFocus: false });
+		}, { openDiff: false, preserveFocus: false });
 	}
 
 	async createFileProposal(
 		uri: vscode.Uri,
 		proposedText: string,
-		mode: 'replace' | 'insert' | 'file' = 'file',
+		mode: 'replace' | 'insert' | 'file' | 'delete' = 'file',
 		options: { openDiff?: boolean; preserveFocus?: boolean } = {}
-	): Promise<void> {
+	): Promise<IBeamProposalChangeSummary> {
 		const { text: originalText, exists } = await this.readUriText(uri);
-		await this.upsertProposal({
+		return this.upsertProposal({
 			originalUri: uri,
 			targetLabel: getEditorLabel(uri),
 			originalText,
 			proposedText,
 			mode,
-			isNewFile: !exists
+			isNewFile: !exists,
+			applied: false,
+			addedLines: 0,
+			deletedLines: 0,
+			modifiedLines: 0
 		}, {
-			openDiff: options.openDiff ?? true,
+			openDiff: options.openDiff ?? !exists,
+			preserveFocus: options.preserveFocus ?? true
+		});
+	}
+
+	async createDeleteProposal(
+		uri: vscode.Uri,
+		options: { openDiff?: boolean; preserveFocus?: boolean } = {}
+	): Promise<IBeamProposalChangeSummary> {
+		const { text: originalText, exists } = await this.readUriText(uri);
+		if (!exists) {
+			throw new Error(vscode.l10n.t('{0} 不存在，无法生成删除提议。', getEditorLabel(uri)));
+		}
+
+		return this.upsertProposal({
+			originalUri: uri,
+			targetLabel: getEditorLabel(uri),
+			originalText,
+			proposedText: '',
+			mode: 'delete',
+			isNewFile: false,
+			applied: false,
+			addedLines: 0,
+			deletedLines: 0,
+			modifiedLines: 0
+		}, {
+			openDiff: options.openDiff ?? false,
 			preserveFocus: options.preserveFocus ?? true
 		});
 	}
@@ -203,18 +268,19 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}
 
 		await this.applyProposal(proposal);
-		this.log(vscode.l10n.t('已接受 {0} 的编辑提议。', proposal.targetLabel));
+		this.log(vscode.l10n.t('已接受 {0} 的编辑提议，保留当前修改。', proposal.targetLabel));
 		await this.removeProposal(proposal.id, true);
 	}
 
-	rejectActiveProposal(): void {
+	async rejectActiveProposal(): Promise<void> {
 		const proposal = this.getActiveProposalEntry();
 		if (!proposal) {
 			return;
 		}
 
+		await this.revertProposal(proposal);
 		this.log(vscode.l10n.t('已拒绝 {0} 的编辑提议。', proposal.targetLabel));
-		void this.removeProposal(proposal.id, false);
+		await this.removeProposal(proposal.id, false);
 	}
 
 	async reopenActiveProposal(): Promise<void> {
@@ -228,7 +294,12 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 
 	provideTextDocumentContent(uri: vscode.Uri): string {
 		const id = uri.path.replace(/^\//, '');
-		return this.proposals.get(id)?.proposedText ?? '';
+		const proposal = this.proposals.get(id);
+		if (!proposal) {
+			return '';
+		}
+
+		return uri.query === 'original' ? proposal.originalText : proposal.proposedText;
 	}
 
 	private async showProposalByOffset(offset: number): Promise<void> {
@@ -249,21 +320,23 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}
 
 		this.activeProposalId = nextProposal.id;
-		await this.showProposal(nextProposal, { preferDiff: true });
+		await this.showProposal(nextProposal, { preferDiff: nextProposal.isNewFile });
 		this.fireState();
 	}
 
 	private async upsertProposal(
 		value: Omit<IBeamProposal, 'id' | 'firstChangeLine'>,
 		options: { openDiff: boolean; preserveFocus: boolean }
-	): Promise<void> {
+	): Promise<IBeamProposalChangeSummary> {
 		const existing = Array.from(this.proposals.values()).find(item => item.originalUri.toString() === value.originalUri.toString());
 		const nextId = existing?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		const proposal: IBeamProposal = {
+		const proposal = this.withDiffMetadata({
 			...value,
 			id: nextId,
-			firstChangeLine: existing?.firstChangeLine
-		};
+			originalText: existing?.originalText ?? value.originalText,
+			isNewFile: existing?.isNewFile ?? value.isNewFile,
+			applied: existing?.applied ?? value.applied
+		});
 
 		this.proposals.set(nextId, proposal);
 		if (!existing) {
@@ -271,47 +344,45 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		}
 		this.activeProposalId = nextId;
 
-		const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === value.originalUri.toString());
-		if (activeEditor) {
-			const diffRange = this.inlineDiffDecorator.showInlineDiff(activeEditor, value.originalText, value.proposedText);
-			this.proposals.set(nextId, {
-				...proposal,
-				firstChangeLine: diffRange.firstChangeLine
-			});
-		}
+		const applied = await this.stageProposalIfNeeded(proposal);
+		const stagedProposal = this.withDiffMetadata({
+			...proposal,
+			applied
+		});
+		this.proposals.set(nextId, stagedProposal);
 
-		await this.showProposal(this.proposals.get(nextId)!, {
+		await this.showProposal(stagedProposal, {
 			preferDiff: options.openDiff,
 			preserveFocus: options.preserveFocus
 		});
-		this.log(vscode.l10n.t('已在编辑器中显示 {0} 的提议预览。', value.targetLabel));
+		this.log(vscode.l10n.t('已先修改 {0}，等待用户确认。', value.targetLabel));
 		this.fireState();
+		return this.toChangeSummary(stagedProposal);
 	}
 
 	private async showProposal(
 		proposal: IBeamProposal,
 		options: { preferDiff: boolean; preserveFocus?: boolean }
 	): Promise<void> {
-		const proposalUri = this.getProposalUri(proposal.id);
-		this._onDidChange.fire(proposalUri);
+		const originalSnapshotUri = this.getProposalUri(proposal.id, 'original');
+		const proposedSnapshotUri = this.getProposalUri(proposal.id, 'proposed');
+		this._onDidChange.fire(originalSnapshotUri);
+		this._onDidChange.fire(proposedSnapshotUri);
 
 		if (options.preferDiff) {
-			const originalUri = proposal.isNewFile
-				? this.getUntitledPreviewUri(proposal.originalUri)
-				: proposal.originalUri;
-			await vscode.workspace.openTextDocument(originalUri);
+			await vscode.workspace.openTextDocument(originalSnapshotUri);
 			await vscode.commands.executeCommand(
 				'vscode.diff',
-				originalUri,
-				proposalUri,
+				originalSnapshotUri,
+				proposedSnapshotUri,
 				this.getDiffTitle(proposal),
 				{ preview: false, preserveFocus: Boolean(options.preserveFocus) }
 			);
 			return;
 		}
 
-		if (proposal.isNewFile) {
-			const document = await vscode.workspace.openTextDocument(proposalUri);
+		if (proposal.isNewFile && !proposal.applied) {
+			const document = await vscode.workspace.openTextDocument(proposedSnapshotUri);
 			await vscode.window.showTextDocument(document, {
 				preview: false,
 				preserveFocus: Boolean(options.preserveFocus)
@@ -319,13 +390,18 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			return;
 		}
 
+		if (proposal.mode === 'delete') {
+			await this.showProposal(proposal, { preferDiff: true, preserveFocus: options.preserveFocus });
+			return;
+		}
+
 		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
 		const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: Boolean(options.preserveFocus) });
 		const diffRange = this.inlineDiffDecorator.showInlineDiff(editor, proposal.originalText, proposal.proposedText);
-		this.proposals.set(proposal.id, {
+		this.proposals.set(proposal.id, this.withDiffMetadata({
 			...proposal,
 			firstChangeLine: diffRange.firstChangeLine
-		});
+		}));
 		if (diffRange.hasChanges) {
 			const line = Math.min(diffRange.firstChangeLine, document.lineCount - 1);
 			const range = document.lineAt(Math.max(0, line)).range;
@@ -334,6 +410,21 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 	}
 
 	private async applyProposal(proposal: IBeamProposal): Promise<void> {
+		if (proposal.applied) {
+			const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === proposal.originalUri.toString());
+			if (activeEditor) {
+				this.inlineDiffDecorator.clearDecorations(activeEditor);
+			}
+			return;
+		}
+
+		if (proposal.mode === 'delete') {
+			const edit = new vscode.WorkspaceEdit();
+			edit.deleteFile(proposal.originalUri, { ignoreIfNotExists: true });
+			await vscode.workspace.applyEdit(edit);
+			return;
+		}
+
 		if (proposal.isNewFile && !await this.uriExists(proposal.originalUri)) {
 			const edit = new vscode.WorkspaceEdit();
 			edit.createFile(proposal.originalUri, { ignoreIfExists: true });
@@ -347,6 +438,41 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		const edit = new vscode.WorkspaceEdit();
 		edit.replace(proposal.originalUri, fullRange, proposal.proposedText);
 		await vscode.workspace.applyEdit(edit);
+
+		const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === proposal.originalUri.toString());
+		if (activeEditor) {
+			this.inlineDiffDecorator.clearDecorations(activeEditor);
+		}
+	}
+
+	private async revertProposal(proposal: IBeamProposal): Promise<void> {
+		if (!proposal.applied) {
+			return;
+		}
+
+		if (proposal.isNewFile) {
+			const edit = new vscode.WorkspaceEdit();
+			edit.deleteFile(proposal.originalUri, { ignoreIfNotExists: true });
+			await vscode.workspace.applyEdit(edit);
+			await this.closeTabsForUri(proposal.originalUri);
+			return;
+		}
+
+		await this.ensureParentDirectory(proposal.originalUri);
+		const exists = await this.uriExists(proposal.originalUri);
+		if (!exists) {
+			const edit = new vscode.WorkspaceEdit();
+			edit.createFile(proposal.originalUri, { ignoreIfExists: true });
+			if (proposal.originalText.length) {
+				edit.insert(proposal.originalUri, new vscode.Position(0, 0), proposal.originalText);
+			}
+			await vscode.workspace.applyEdit(edit);
+		} else {
+			const document = await vscode.workspace.openTextDocument(proposal.originalUri);
+			const edit = new vscode.WorkspaceEdit();
+			edit.replace(proposal.originalUri, fullDocumentRange(document), proposal.originalText);
+			await vscode.workspace.applyEdit(edit);
+		}
 
 		const activeEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === proposal.originalUri.toString());
 		if (activeEditor) {
@@ -383,7 +509,7 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		this.activeProposalId = this.proposalOrder[nextIndex];
 		const nextProposal = this.getActiveProposalEntry();
 		if (revealNext && nextProposal) {
-			await this.showProposal(nextProposal, { preferDiff: true });
+			await this.showProposal(nextProposal, { preferDiff: nextProposal.isNewFile });
 		}
 		this.fireState();
 	}
@@ -392,17 +518,11 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 		return this.activeProposalId ? this.proposals.get(this.activeProposalId) : undefined;
 	}
 
-	private getProposalUri(id: string): vscode.Uri {
+	private getProposalUri(id: string, kind: 'original' | 'proposed'): vscode.Uri {
 		return vscode.Uri.from({
 			scheme: PROPOSAL_SCHEME,
-			path: `/${id}`
-		});
-	}
-
-	private getUntitledPreviewUri(uri: vscode.Uri): vscode.Uri {
-		return vscode.Uri.from({
-			scheme: 'untitled',
-			path: uri.path
+			path: `/${id}`,
+			query: kind
 		});
 	}
 
@@ -434,8 +554,11 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 	}
 
 	private async closeTabsForProposal(id: string): Promise<void> {
-		const proposalUri = this.getProposalUri(id);
-		await this.closeMatchingTabs(tab => isBeamProposalTab(tab.input, proposalUri));
+		await this.closeMatchingTabs(tab => isBeamProposalTab(tab.input, id));
+	}
+
+	private async closeTabsForUri(uri: vscode.Uri): Promise<void> {
+		await this.closeMatchingTabs(tab => isWorkspaceUriTab(tab.input, uri));
 	}
 
 	private async closeMatchingTabs(predicate: (tab: vscode.Tab) => boolean): Promise<void> {
@@ -481,6 +604,89 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 	private log(message: string): void {
 		this.outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
 	}
+
+	private withDiffMetadata(proposal: IBeamProposal): IBeamProposal {
+		const summary = summarizeProposalLines(proposal.originalText, proposal.proposedText);
+		return {
+			...proposal,
+			firstChangeLine: summary.firstChangeLine,
+			lastChangeLine: summary.lastChangeLine,
+			addedLines: summary.addedLines,
+			deletedLines: summary.deletedLines,
+			modifiedLines: summary.modifiedLines
+		};
+	}
+
+	private toChangeSummary(proposal: IBeamProposal): IBeamProposalChangeSummary {
+		const changeCount = proposal.addedLines + proposal.deletedLines + proposal.modifiedLines;
+		const lineLabel = formatLineRangeLabel(proposal.firstChangeLine, proposal.lastChangeLine);
+		const statParts: string[] = [];
+		if (proposal.addedLines) {
+			statParts.push(vscode.l10n.t('+{0} 行', proposal.addedLines));
+		}
+		if (proposal.deletedLines) {
+			statParts.push(vscode.l10n.t('-{0} 行', proposal.deletedLines));
+		}
+		if (proposal.modifiedLines) {
+			statParts.push(vscode.l10n.t('~{0} 行', proposal.modifiedLines));
+		}
+		const summary = [lineLabel, statParts.join(' ')].filter(Boolean).join(' · ') || vscode.l10n.t('整文件变更');
+		return {
+			id: proposal.id,
+			label: proposal.targetLabel,
+			mode: proposal.mode,
+			firstChangeLine: proposal.firstChangeLine === undefined ? undefined : proposal.firstChangeLine + 1,
+			lastChangeLine: proposal.lastChangeLine === undefined ? undefined : proposal.lastChangeLine + 1,
+			addedLines: proposal.addedLines,
+			deletedLines: proposal.deletedLines,
+			modifiedLines: proposal.modifiedLines,
+			changeCount,
+			isNewFile: proposal.isNewFile,
+			applied: proposal.applied,
+			summary
+		};
+	}
+
+	private async stageProposalIfNeeded(proposal: IBeamProposal): Promise<boolean> {
+		if (proposal.mode === 'delete') {
+			const edit = new vscode.WorkspaceEdit();
+			edit.deleteFile(proposal.originalUri, { ignoreIfNotExists: true });
+			await vscode.workspace.applyEdit(edit);
+			return true;
+		}
+
+		await this.ensureParentDirectory(proposal.originalUri);
+		if (!await this.uriExists(proposal.originalUri)) {
+			const edit = new vscode.WorkspaceEdit();
+			edit.createFile(proposal.originalUri, { ignoreIfExists: true });
+			if (proposal.proposedText.length) {
+				edit.insert(proposal.originalUri, new vscode.Position(0, 0), proposal.proposedText);
+			}
+			await vscode.workspace.applyEdit(edit);
+			return true;
+		}
+
+		const document = await vscode.workspace.openTextDocument(proposal.originalUri);
+		if (document.getText() !== proposal.proposedText) {
+			const edit = new vscode.WorkspaceEdit();
+			edit.replace(proposal.originalUri, fullDocumentRange(document), proposal.proposedText);
+			await vscode.workspace.applyEdit(edit);
+		}
+		return true;
+	}
+
+	private async ensureParentDirectory(uri: vscode.Uri): Promise<void> {
+		if (uri.scheme !== 'file') {
+			return;
+		}
+
+		const parentUri = vscode.Uri.file(path.dirname(uri.fsPath));
+		try {
+			await vscode.workspace.fs.createDirectory(parentUri);
+		} catch {
+			// Best effort only.
+		}
+	}
 }
 
 function applyProposalText(editor: vscode.TextEditor, code: string, mode: 'replace' | 'insert'): string {
@@ -502,16 +708,91 @@ function fullDocumentRange(document: vscode.TextDocument): vscode.Range {
 	return new vscode.Range(new vscode.Position(0, 0), lastLine.range.end);
 }
 
-function isBeamProposalTab(input: vscode.Tab['input'], proposalUri?: vscode.Uri): boolean {
+function isBeamProposalTab(input: vscode.Tab['input'], proposalId?: string): boolean {
+	const matchesProposal = (uri: vscode.Uri): boolean => uri.scheme === PROPOSAL_SCHEME
+		&& (!proposalId || uri.path === `/${proposalId}`);
+
 	if (input instanceof vscode.TabInputText) {
-		return input.uri.scheme === PROPOSAL_SCHEME
-			&& (!proposalUri || input.uri.toString() === proposalUri.toString());
+		return matchesProposal(input.uri);
 	}
 
 	if (input instanceof vscode.TabInputTextDiff) {
-		return input.modified.scheme === PROPOSAL_SCHEME
-			&& (!proposalUri || input.modified.toString() === proposalUri.toString());
+		return matchesProposal(input.original) || matchesProposal(input.modified);
 	}
 
 	return false;
+}
+
+function isWorkspaceUriTab(input: vscode.Tab['input'], uri: vscode.Uri): boolean {
+	if (input instanceof vscode.TabInputText) {
+		return input.uri.toString() === uri.toString();
+	}
+
+	if (input instanceof vscode.TabInputTextDiff) {
+		return input.original.toString() === uri.toString() || input.modified.toString() === uri.toString();
+	}
+
+	return false;
+}
+
+function summarizeProposalLines(originalText: string, proposedText: string): {
+	readonly firstChangeLine?: number;
+	readonly lastChangeLine?: number;
+	readonly addedLines: number;
+	readonly deletedLines: number;
+	readonly modifiedLines: number;
+} {
+	const originalLines = originalText.split('\n');
+	const proposedLines = proposedText.split('\n');
+	let firstChangeLine: number | undefined;
+	let lastChangeLine: number | undefined;
+	let addedLines = 0;
+	let deletedLines = 0;
+	let modifiedLines = 0;
+
+	const maxLines = Math.max(originalLines.length, proposedLines.length);
+	for (let index = 0; index < maxLines; index++) {
+		const originalLine = originalLines[index];
+		const proposedLine = proposedLines[index];
+
+		if (originalLine === undefined && proposedLine !== undefined) {
+			firstChangeLine ??= index;
+			lastChangeLine = index;
+			addedLines += 1;
+			continue;
+		}
+
+		if (originalLine !== undefined && proposedLine === undefined) {
+			firstChangeLine ??= index;
+			lastChangeLine = index;
+			deletedLines += 1;
+			continue;
+		}
+
+		if (originalLine !== proposedLine) {
+			firstChangeLine ??= index;
+			lastChangeLine = index;
+			modifiedLines += 1;
+		}
+	}
+
+	return {
+		firstChangeLine,
+		lastChangeLine,
+		addedLines,
+		deletedLines,
+		modifiedLines
+	};
+}
+
+function formatLineRangeLabel(firstLine: number | undefined, lastLine: number | undefined): string | undefined {
+	if (firstLine === undefined || lastLine === undefined) {
+		return undefined;
+	}
+
+	if (firstLine === lastLine) {
+		return vscode.l10n.t('第 {0} 行', firstLine + 1);
+	}
+
+	return vscode.l10n.t('第 {0}-{1} 行', firstLine + 1, lastLine + 1);
 }

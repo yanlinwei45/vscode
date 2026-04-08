@@ -23,6 +23,7 @@
     "onCommand:beam.sendCurrentFile",
     "onCommand:beam.sendProblems",
     "onCommand:beam.addAttachment",
+    "onCommand:beam.configureAccessToken",
     "onCommand:beam.showLogs",
     "onCommand:beam.insertCodeBlock",
     "onCommand:beam.replaceSelectionWithCodeBlock",
@@ -109,6 +110,12 @@
         "title": "%command.addAttachment%",
         "category": "%command.category%",
         "icon": "$(attach)"
+      },
+      {
+        "command": "beam.configureAccessToken",
+        "title": "%command.configureAccessToken%",
+        "category": "%command.category%",
+        "icon": "$(key)"
       },
       {
         "command": "beam.showLogs",
@@ -260,6 +267,9 @@
           "command": "beam.addAttachment"
         },
         {
+          "command": "beam.configureAccessToken"
+        },
+        {
           "command": "beam.showLogs"
         },
         {
@@ -363,7 +373,7 @@
         },
         "beam.baseUrl": {
           "type": "string",
-          "default": "",
+          "default": "https://code.api.audiozen.cn/v1",
           "description": "%config.baseUrl.description%",
           "scope": "application"
         }

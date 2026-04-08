@@ -4,10 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { isReadOnlyCommand, isSafeCommand } from './commandPolicy';
 import { BeamContextService } from './contextService';
 import { getEditorLabel, getPreferredCodeEditor, revealEditorRange, selectCurrentBlock, selectCurrentFunction, setEditorRangeSelection } from './editorContext';
-import { BeamProposalService } from './proposalService';
+import { BeamProposalService, type IBeamProposalChangeSummary } from './proposalService';
 
 const MAX_READ_LENGTH = 20000;
 const MAX_SEARCH_RESULTS = 20;
@@ -187,6 +188,17 @@ export class BeamToolService {
 				}
 			},
 			{
+				name: 'delete_file',
+				description: '\u4e3a\u5220\u9664\u4e00\u4e2a\u6587\u4ef6\u751f\u6210\u53ef\u786e\u8ba4\u7684\u63d0\u8bae\u3002',
+				input_schema: {
+					type: 'object',
+					properties: {
+						path: { type: 'string', description: '\u5de5\u4f5c\u533a\u76f8\u5bf9\u8def\u5f84\u6216\u7edd\u5bf9\u8def\u5f84\u3002' }
+					},
+					required: ['path']
+				}
+			},
+			{
 				name: 'replace_in_file',
 				description: '\u5728\u5de5\u4f5c\u533a\u6587\u4ef6\u4e2d\u66ff\u6362\u7cbe\u786e\u6587\u672c\u3002',
 				input_schema: {
@@ -217,39 +229,50 @@ export class BeamToolService {
 
 	async invoke(toolName: string, input: unknown): Promise<IBeamToolCallResult> {
 		this.log(vscode.l10n.t('\u6b63\u5728\u8c03\u7528\u5de5\u5177 {0}\u3002', toolName));
-		switch (toolName) {
-			case 'get_active_editor_context':
-				return { toolName, content: await this.contextService.buildPromptContext() };
-			case 'read_file':
-				return { toolName, content: await this.readFile(asRecord(input).path) };
-			case 'list_directory':
-				return { toolName, content: await this.listDirectory(asOptionalString(asRecord(input).path) || '.') };
-			case 'search_workspace':
-				return { toolName, content: await this.searchWorkspace(asRecord(input).query) };
-			case 'get_diagnostics':
-				return { toolName, content: await this.getDiagnostics(asOptionalString(asRecord(input).path)) };
-			case 'open_file':
-				return { toolName, content: await this.openFile(asRecord(input)) };
-			case 'select_editor_range':
-				return { toolName, content: await this.selectEditorRange(asRecord(input)) };
-			case 'select_current_function':
-				return { toolName, content: await this.selectCurrentFunction() };
-			case 'select_current_block':
-				return { toolName, content: await this.selectCurrentBlock() };
-			case 'reveal_range':
-				return { toolName, content: await this.revealRange(asRecord(input)) };
-			case 'create_edit_proposal':
-				return { toolName, content: await this.createEditProposal(asRecord(input)) };
-			case 'write_file':
-				return { toolName, content: await this.writeFile(asRecord(input)) };
-			case 'create_file':
-				return { toolName, content: await this.createFile(asRecord(input)) };
-			case 'replace_in_file':
-				return { toolName, content: await this.replaceInFile(asRecord(input)) };
-			case 'run_command':
-				return { toolName, content: await this.runCommand(asRecord(input)) };
-			default:
-				throw new Error(vscode.l10n.t('\u672a\u77e5\u5de5\u5177\uff1a{0}', toolName));
+		try {
+			switch (toolName) {
+				case 'get_active_editor_context':
+					return { toolName, content: await this.contextService.buildPromptContext() };
+				case 'read_file':
+					return { toolName, content: await this.readFile(asRecord(input).path) };
+				case 'list_directory':
+					return { toolName, content: await this.listDirectory(asOptionalString(asRecord(input).path) || '.') };
+				case 'search_workspace':
+					return { toolName, content: await this.searchWorkspace(asRecord(input).query) };
+				case 'get_diagnostics':
+					return { toolName, content: await this.getDiagnostics(asOptionalString(asRecord(input).path)) };
+				case 'open_file':
+					return { toolName, content: await this.openFile(asRecord(input)) };
+				case 'select_editor_range':
+					return { toolName, content: await this.selectEditorRange(asRecord(input)) };
+				case 'select_current_function':
+					return { toolName, content: await this.selectCurrentFunction() };
+				case 'select_current_block':
+					return { toolName, content: await this.selectCurrentBlock() };
+				case 'reveal_range':
+					return { toolName, content: await this.revealRange(asRecord(input)) };
+				case 'create_edit_proposal':
+					return { toolName, content: await this.createEditProposal(asRecord(input)) };
+				case 'write_file':
+					return { toolName, content: await this.writeFile(asRecord(input)) };
+				case 'create_file':
+					return { toolName, content: await this.createFile(asRecord(input)) };
+				case 'delete_file':
+					return { toolName, content: await this.deleteFile(asRecord(input)) };
+				case 'replace_in_file':
+					return { toolName, content: await this.replaceInFile(asRecord(input)) };
+				case 'run_command':
+					return { toolName, content: await this.runCommand(asRecord(input)) };
+				default:
+					throw new Error(vscode.l10n.t('\u672a\u77e5\u5de5\u5177\uff1a{0}', toolName));
+			}
+		} catch (error) {
+			const message = toErrorMessage(error);
+			this.log(vscode.l10n.t('\u5de5\u5177 {0} \u6267\u884c\u5931\u8d25\uff1a{1}', toolName, message));
+			return {
+				toolName,
+				content: vscode.l10n.t('\u5de5\u5177\u6267\u884c\u5931\u8d25\uff1a{0}', message)
+			};
 		}
 	}
 
@@ -382,22 +405,31 @@ export class BeamToolService {
 			throw new Error(vscode.l10n.t('mode \u5fc5\u987b\u662f insert \u6216 replace\u3002'));
 		}
 
-		await this.proposalService.createProposalFromCodeBlock(code, mode);
-		return vscode.l10n.t('\u5df2\u521b\u5efa {0} \u63d0\u8bae\u3002', mode);
+		const summary = await this.proposalService.createProposalFromCodeBlock(code, mode);
+		return this.formatProposalCreatedMessage(summary, vscode.l10n.t('已先在编辑器中应用修改，等待用户确认。'));
 	}
 
 	private async writeFile(input: Record<string, unknown>): Promise<string> {
 		const uri = this.resolveWorkspacePath(input.path);
 		const content = asStringAllowEmpty(input.content, 'content');
-		await this.proposalService.createFileProposal(uri, content, 'file');
-		return vscode.l10n.t('\u5df2\u4e3a {1} \u751f\u6210 {0} \u4e2a\u5b57\u7b26\u7684\u6587\u4ef6\u66f4\u6539\u63d0\u8bae\u3002', content.length, getEditorLabel(uri));
+		const summary = await this.proposalService.createFileProposal(uri, content, 'file');
+		return this.formatProposalCreatedMessage(summary, vscode.l10n.t('已为 {0} 先应用文件修改，等待用户确认。', getEditorLabel(uri)));
 	}
 
 	private async createFile(input: Record<string, unknown>): Promise<string> {
 		const uri = this.resolveWorkspacePath(input.path);
 		const content = asStringAllowEmpty(input.content, 'content');
-		await this.proposalService.createFileProposal(uri, content, 'file');
-		return vscode.l10n.t('\u5df2\u4e3a {0} \u751f\u6210\u65b0\u6587\u4ef6\u63d0\u8bae\u3002', getEditorLabel(uri));
+		if (await this.uriExists(uri)) {
+			throw new Error(vscode.l10n.t('{0} 已存在，请改用 write_file 或 replace_in_file。', getEditorLabel(uri)));
+		}
+		const summary = await this.proposalService.createFileProposal(uri, content, 'file');
+		return this.formatProposalCreatedMessage(summary, vscode.l10n.t('已先创建 {0}，等待用户确认。', getEditorLabel(uri)));
+	}
+
+	private async deleteFile(input: Record<string, unknown>): Promise<string> {
+		const uri = this.resolveWorkspacePath(input.path);
+		const summary = await this.proposalService.createDeleteProposal(uri);
+		return this.formatProposalCreatedMessage(summary, vscode.l10n.t('已生成 {0} 的删除提议，等待用户确认。', getEditorLabel(uri)));
 	}
 
 	private async replaceInFile(input: Record<string, unknown>): Promise<string> {
@@ -413,10 +445,10 @@ export class BeamToolService {
 		}
 
 		const nextText = replaceAll ? text.split(search).join(replace) : text.replace(search, replace);
-		await this.proposalService.createFileProposal(uri, nextText, 'file');
+		const summary = await this.proposalService.createFileProposal(uri, nextText, 'file');
 
 		const count = replaceAll ? Math.max(0, text.split(search).length - 1) : 1;
-		return vscode.l10n.t('\u5df2\u4e3a {1} \u751f\u6210 {0} \u5904\u66ff\u6362\u7684\u63d0\u8bae\u3002', count, getEditorLabel(uri));
+		return this.formatProposalCreatedMessage(summary, vscode.l10n.t('已在 {1} 中先应用 {0} 处替换，等待用户确认。', count, getEditorLabel(uri)));
 	}
 
 	private async runCommand(input: Record<string, unknown>): Promise<string> {
@@ -485,6 +517,10 @@ export class BeamToolService {
 
 	private resolveWorkspacePath(pathInput: unknown): vscode.Uri {
 		const pathValue = asString(pathInput, 'path');
+		if (path.isAbsolute(pathValue)) {
+			return vscode.Uri.file(path.normalize(pathValue));
+		}
+
 		const folder = vscode.workspace.workspaceFolders?.[0];
 		if (!folder) {
 			throw new Error(vscode.l10n.t('\u5f53\u524d\u6ca1\u6709\u6253\u5f00\u7684\u5de5\u4f5c\u533a\u6587\u4ef6\u5939\u3002'));
@@ -542,6 +578,42 @@ export class BeamToolService {
 
 	private log(message: string): void {
 		this.outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
+	}
+
+	private formatProposalCreatedMessage(summary: IBeamProposalChangeSummary, intro: string): string {
+		const linePart = summary.firstChangeLine
+			? (summary.lastChangeLine && summary.lastChangeLine !== summary.firstChangeLine
+				? vscode.l10n.t('第 {0}-{1} 行', summary.firstChangeLine, summary.lastChangeLine)
+				: vscode.l10n.t('第 {0} 行', summary.firstChangeLine))
+			: vscode.l10n.t('整文件');
+		const statParts: string[] = [];
+		if (summary.addedLines) {
+			statParts.push(vscode.l10n.t('+{0} 行', summary.addedLines));
+		}
+		if (summary.deletedLines) {
+			statParts.push(vscode.l10n.t('-{0} 行', summary.deletedLines));
+		}
+		if (summary.modifiedLines) {
+			statParts.push(vscode.l10n.t('~{0} 行', summary.modifiedLines));
+		}
+
+		return [
+			intro,
+			'',
+			vscode.l10n.t('变更文件：{0}', summary.label),
+			vscode.l10n.t('位置：{0}', linePart),
+			vscode.l10n.t('统计：{0}', statParts.join('，') || vscode.l10n.t('存在代码差异')),
+			vscode.l10n.t('状态：已修改编辑器内容，可在 Beam 中接受或拒绝。'),
+		].join('\n');
+	}
+
+	private async uriExists(uri: vscode.Uri): Promise<boolean> {
+		try {
+			await vscode.workspace.fs.stat(uri);
+			return true;
+		} catch {
+			return false;
+		}
 	}
 }
 
@@ -614,4 +686,12 @@ function formatRange(range: vscode.Range): string {
 
 function stripAnsi(value: string): string {
 	return value.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+}
+
+function toErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return String(error);
 }

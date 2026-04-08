@@ -7,7 +7,6 @@ import * as http from 'http';
 import * as https from 'https';
 import * as vscode from 'vscode';
 import type { IBeamComposerResolvedAttachments } from './composerService';
-import { readCodexOpenAIConfiguration, type ICodexOpenAIConfiguration } from './codexConfig';
 import { buildSystemPrompt } from './promptPolicy';
 import { buildOpenAIChatCompletionMessages, getBeamModelOption, getBeamModelOptions, inferBeamProviderForModel, normalizeBeamModelSelection, normalizeBeamProvider, parseOpenAIFunctionArguments, resolveBeamModel, toOpenAIChatCompletionTools, type BeamProvider, type IBeamModelOption, type IBeamTurnContentBlock, type IRequestTurn } from './providerUtils';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
@@ -15,29 +14,42 @@ import { BeamToolService, type IBeamToolDefinition } from './toolService';
 const STORAGE_KEY = 'beam.chatSessions.v2';
 const ACTIVE_SESSION_STORAGE_KEY = 'beam.activeChatSessionId.v1';
 const SELECTED_MODEL_STORAGE_KEY = 'beam.selectedModel.v1';
+const ACCESS_TOKEN_STORAGE_KEY = 'beam.accessToken.v2';
 const REQUEST_HISTORY_LIMIT = 30;
 const REQUEST_TIMEOUT_MS = 120000;
-const MAX_TOOL_ROUNDS = 8;
+const MAX_REQUEST_ATTEMPTS = 3;
+const REQUEST_RETRY_BACKOFF_MS = [1500, 3000];
 const MAX_SESSIONS = 20;
 const MAX_HISTORY_CHAR_BUDGET = 24000;
 const MAX_MESSAGE_CHAR_BUDGET = 6000;
 const MAX_REQUEST_CONTEXT_CHARS = 9000;
 const MAX_SESSION_TITLE_LENGTH = 28;
 const MAX_SESSION_PREVIEW_LENGTH = 90;
+const DEFAULT_BEAM_BASE_URL = 'https://code.api.audiozen.cn/v1';
 
 const DEFAULT_SESSION_TITLE = '\u65b0\u5bf9\u8bdd';
 
 export interface IBeamChatMessage {
-	readonly role: 'user' | 'assistant' | 'system' | 'tool';
+	readonly role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking';
 	readonly content: string;
 	readonly metadata?: {
 		readonly toolName?: string;
+		readonly title?: string;
+		readonly round?: number;
+		readonly targetLabel?: string;
+		readonly firstChangeLine?: number;
+		readonly lastChangeLine?: number;
+		readonly addedLines?: number;
+		readonly deletedLines?: number;
+		readonly modifiedLines?: number;
+		readonly applied?: boolean;
 	};
 }
 
 export interface IBeamChatState {
 	readonly messages: readonly IBeamChatMessage[];
 	readonly busy: boolean;
+	readonly workingLabel?: string;
 	readonly lastRequestContext?: string;
 	readonly pendingToolNames?: readonly string[];
 	readonly selectedModel: string;
@@ -223,16 +235,19 @@ export class BeamService extends vscode.Disposable {
 
 	private messages: IBeamChatMessage[] = [];
 	private busy = false;
+	private workingLabel: string | undefined;
 	private lastRequestContext: string | undefined;
 	private pendingToolNames: string[] = [];
 	private sessions: IBeamChatSessionRecord[] = [];
 	private activeSessionId: string | undefined;
 	private selectedModel: string | undefined;
-	private codexOpenAIConfiguration: ICodexOpenAIConfiguration | undefined;
+	private accessToken: string | undefined;
+	private accessTokenPrompt: Promise<string | undefined> | undefined;
 	private activeRequestCancellation = new vscode.CancellationTokenSource();
 
 	constructor(
 		private readonly storage: vscode.Memento,
+		private readonly globalState: vscode.Memento,
 		private readonly outputChannel: vscode.OutputChannel,
 		private readonly toolService: BeamToolService
 	) {
@@ -241,6 +256,7 @@ export class BeamService extends vscode.Disposable {
 		});
 
 		this.restoreState();
+		this.accessToken = normalizeStoredAccessToken(this.globalState.get<string>(ACCESS_TOKEN_STORAGE_KEY));
 		this.log(vscode.l10n.t('Beam \u5df2\u6062\u590d {0} \u4e2a\u5bf9\u8bdd\u3002', this.sessions.length));
 	}
 
@@ -250,6 +266,7 @@ export class BeamService extends vscode.Disposable {
 		return {
 			messages: this.messages,
 			busy: this.busy,
+			workingLabel: this.workingLabel,
 			lastRequestContext: this.lastRequestContext,
 			pendingToolNames: this.pendingToolNames,
 			selectedModel: configuration.model,
@@ -329,8 +346,14 @@ export class BeamService extends vscode.Disposable {
 			return;
 		}
 
+		const configuration = await this.getRequestConfiguration();
+		if (!configuration) {
+			return;
+		}
+
 		this.lastRequestContext = trimRequestContext(requestContext?.trim());
 		this.pendingToolNames = [];
+		this.workingLabel = vscode.l10n.t('正在分析需求并规划下一步...');
 		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002') }];
 		this.updateActiveSessionTitleFromPrompt(trimmed);
 		this.busy = true;
@@ -340,7 +363,7 @@ export class BeamService extends vscode.Disposable {
 		this._onDidChangeState.fire(this.getState());
 
 		try {
-			const content = await this.requestAssistantResponse(undefined, this.activeRequestCancellation.token, attachments);
+			const content = await this.requestAssistantResponse(configuration, undefined, this.activeRequestCancellation.token, attachments);
 			this.messages = [...this.messages, { role: 'assistant', content }];
 			this.persistState();
 		} catch (error) {
@@ -354,6 +377,7 @@ export class BeamService extends vscode.Disposable {
 			this.persistState();
 		} finally {
 			this.busy = false;
+			this.workingLabel = undefined;
 			this.pendingToolNames = [];
 			this.activeRequestCancellation.dispose();
 			this.activeRequestCancellation = new vscode.CancellationTokenSource();
@@ -374,11 +398,11 @@ export class BeamService extends vscode.Disposable {
 	}
 
 	private async requestAssistantResponse(
+		configuration: IBeamProviderConfiguration,
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
 		token?: vscode.CancellationToken,
 		attachments?: IBeamComposerResolvedAttachments
 	): Promise<string> {
-		const configuration = this.getConfiguration();
 		if (configuration.provider === 'openai') {
 			return this.requestOpenAIResponse(configuration, progress, token, attachments);
 		}
@@ -394,14 +418,14 @@ export class BeamService extends vscode.Disposable {
 	): Promise<string> {
 		const { baseUrl, apiKey, authToken, requestModel: model, anthropicBeta, systemPrompt } = configuration;
 		if (!apiKey && !authToken) {
-			throw new Error(vscode.l10n.t('\u4f7f\u7528 Beam \u524d\uff0c\u8bf7\u5148\u8bbe\u7f6e ANTHROPIC_API_KEY \u6216 ANTHROPIC_AUTH_TOKEN\u3002'));
+			throw new Error(vscode.l10n.t('使用 Beam 前，请先输入访问令牌。'));
 		}
 
 		const endpoint = this.resolveAnthropicEndpoint(baseUrl);
 		const tools = this.toolService.getDefinitions();
 		const turns = this.buildInitialTurns(attachments);
 
-		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+		for (let round = 0; ; round++) {
 			this.throwIfCancelled(token);
 			this.reportModelProgress(progress, round);
 
@@ -418,13 +442,19 @@ export class BeamService extends vscode.Disposable {
 			};
 
 			this.log(vscode.l10n.t('\u6b63\u5728\u5411 {0} \u53d1\u9001\u8bf7\u6c42\uff0c\u6a21\u578b\uff1a{1}\u3002', endpoint, model));
-			const response = await postJson<IAnthropicResponse>(endpoint, {
-				'content-type': 'application/json',
-				'anthropic-version': '2023-06-01',
-				'anthropic-beta': anthropicBeta ?? '',
-				'x-api-key': apiKey ?? '',
-				'authorization': authToken ? `Bearer ${authToken}` : ''
-			}, body, token);
+			const response = await this.postJsonWithRetry<IAnthropicResponse>(
+				endpoint,
+				{
+					'content-type': 'application/json',
+					'anthropic-version': '2023-06-01',
+					'anthropic-beta': anthropicBeta ?? '',
+					'x-api-key': apiKey ?? '',
+					'authorization': authToken ? `Bearer ${authToken}` : ''
+				},
+				body,
+				token,
+				progress
+			);
 			this.log(vscode.l10n.t('Beam \u5df2\u6536\u5230\u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
 			this.throwIfCancelled(token);
 
@@ -441,7 +471,7 @@ export class BeamService extends vscode.Disposable {
 				return assistantText;
 			}
 
-			this.recordAssistantProgress(assistantText);
+			this.recordAssistantProgress(assistantText, round);
 			turns.push({
 				role: 'assistant',
 				content: blocks.map(block => {
@@ -465,7 +495,7 @@ export class BeamService extends vscode.Disposable {
 				})
 			});
 
-			const toolResultBlocks = await this.invokeTools(toolUses, progress, token);
+			const toolResultBlocks = await this.invokeTools(toolUses, round, progress, token);
 			turns.push({
 				role: 'user',
 				content: toolResultBlocks.map(result => ({
@@ -475,8 +505,6 @@ export class BeamService extends vscode.Disposable {
 				}))
 			});
 		}
-
-		throw new Error(vscode.l10n.t('Beam \u8d85\u8fc7\u4e86\u6700\u5927\u5de5\u5177\u8c03\u7528\u8f6e\u6570\u3002'));
 	}
 
 	private async requestOpenAIResponse(
@@ -487,14 +515,14 @@ export class BeamService extends vscode.Disposable {
 	): Promise<string> {
 		const { baseUrl, apiKey, requestModel: model, systemPrompt } = configuration;
 		if (!apiKey) {
-			throw new Error(vscode.l10n.t('\u4f7f\u7528 OpenAI \u7248 Beam \u524d\uff0c\u8bf7\u5148\u8bbe\u7f6e OPENAI_API_KEY\u3002'));
+			throw new Error(vscode.l10n.t('使用 Beam 前，请先输入访问令牌。'));
 		}
 
 		const endpoint = this.resolveOpenAIChatCompletionsEndpoint(baseUrl);
 		const tools = toOpenAIChatCompletionTools(this.toolService.getDefinitions());
 		const turns = this.buildInitialTurns(attachments);
 
-		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+		for (let round = 0; ; round++) {
 			this.throwIfCancelled(token);
 			this.reportModelProgress(progress, round);
 
@@ -506,10 +534,16 @@ export class BeamService extends vscode.Disposable {
 			};
 
 			this.log(vscode.l10n.t('\u6b63\u5728\u5411 {0} \u53d1\u9001 OpenAI Chat Completions \u8bf7\u6c42\uff0c\u6a21\u578b\uff1a{1}\u3002', endpoint, model));
-			const response = await postJson<IOpenAIChatCompletionsResponse>(endpoint, {
-				'content-type': 'application/json',
-				'authorization': `Bearer ${apiKey}`
-			}, body, token);
+			const response = await this.postJsonWithRetry<IOpenAIChatCompletionsResponse>(
+				endpoint,
+				{
+					'content-type': 'application/json',
+					'authorization': `Bearer ${apiKey}`
+				},
+				body,
+				token,
+				progress
+			);
 			this.log(vscode.l10n.t('Beam \u5df2\u6536\u5230 OpenAI \u54cd\u5e94\uff0c\u72b6\u6001\u7801\uff1a{0}\u3002', response.statusCode));
 			this.throwIfCancelled(token);
 
@@ -526,13 +560,13 @@ export class BeamService extends vscode.Disposable {
 				return assistantText;
 			}
 
-			this.recordAssistantProgress(assistantText);
+			this.recordAssistantProgress(assistantText, round);
 			turns.push({
 				role: 'assistant',
 				content: toBeamOpenAIChatCompletionBlocks(message)
 			});
 
-			const toolResultBlocks = await this.invokeTools(toolUses, progress, token);
+			const toolResultBlocks = await this.invokeTools(toolUses, round, progress, token);
 			turns.push({
 				role: 'user',
 				content: toolResultBlocks.map(result => ({
@@ -542,18 +576,38 @@ export class BeamService extends vscode.Disposable {
 				}))
 			});
 		}
-
-		throw new Error(vscode.l10n.t('Beam \u8d85\u8fc7\u4e86\u6700\u5927\u5de5\u5177\u8c03\u7528\u8f6e\u6570\u3002'));
 	}
 
 	private getConfiguration(): IBeamProviderConfiguration {
 		const configuration = vscode.workspace.getConfiguration('beam');
-		const configuredProvider = normalizeBeamProvider(configuration.get<string>('provider') || process.env['BEAM_PROVIDER']);
-		const configuredBaseUrl = configuration.get<string>('baseUrl')?.trim();
+		const configuredProvider = normalizeBeamProvider(configuration.get<string>('provider'));
+		const configuredBaseUrl = configuration.get<string>('baseUrl')?.trim() || DEFAULT_BEAM_BASE_URL;
 		const configuredModel = this.selectedModel || configuration.get<string>('model')?.trim();
 		const systemPrompt = buildSystemPrompt(configuration.get<string>('systemPrompt')?.trim());
 		const inferredProvider = inferBeamProviderForModel(configuredModel, configuredProvider);
 		return this.getConfigurationForProvider(inferredProvider, configuredProvider, configuredBaseUrl, configuredModel, systemPrompt);
+	}
+
+	private async getRequestConfiguration(): Promise<IBeamProviderConfiguration | undefined> {
+		const configuration = this.getConfiguration();
+		const accessToken = await this.ensureAccessToken();
+		if (!accessToken) {
+			return undefined;
+		}
+
+		if (configuration.provider === 'openai') {
+			return {
+				...configuration,
+				apiKey: accessToken,
+				authToken: undefined
+			};
+		}
+
+		return {
+			...configuration,
+			apiKey: accessToken,
+			authToken: accessToken
+		};
 	}
 
 	private getConfigurationForProvider(
@@ -563,35 +617,27 @@ export class BeamService extends vscode.Disposable {
 		configuredModel: string | undefined,
 		systemPrompt: string
 	): IBeamProviderConfiguration {
-		const codexOpenAIConfiguration = this.getCodexOpenAIConfiguration();
 		if (provider === 'openai') {
-			const baseUrl = configuredBaseUrl || process.env['OPENAI_BASE_URL']?.trim() || codexOpenAIConfiguration.baseUrl || 'https://api.openai.com';
-			const resolvedModel = resolveBeamModel(provider, configuredModel, process.env['OPENAI_MODEL'] || codexOpenAIConfiguration.model);
-			const migratedModel = baseUrl === codexOpenAIConfiguration.baseUrl
-				? normalizeBeamModelSelection(codexOpenAIConfiguration.modelMigrations.get(resolvedModel) || resolvedModel) || resolvedModel
-				: resolvedModel;
-			const modelOption = getBeamModelOption(migratedModel);
+			const baseUrl = configuredBaseUrl || DEFAULT_BEAM_BASE_URL;
+			const resolvedModel = resolveBeamModel(provider, configuredModel, undefined);
+			const modelOption = getBeamModelOption(resolvedModel);
 			return {
 				provider,
 				configuredProvider,
 				baseUrl,
-				apiKey: process.env['OPENAI_API_KEY']?.trim() || codexOpenAIConfiguration.apiKey,
-				model: modelOption?.id ?? migratedModel,
-				requestModel: modelOption?.requestModel ?? migratedModel,
+				model: modelOption?.id ?? resolvedModel,
+				requestModel: modelOption?.requestModel ?? resolvedModel,
 				systemPrompt
 			};
 		}
 
-		const baseUrl = configuredBaseUrl || codexOpenAIConfiguration.baseUrl || 'https://api.anthropic.com';
-		const useCodexAnthropicProxy = Boolean(codexOpenAIConfiguration.baseUrl && baseUrl === codexOpenAIConfiguration.baseUrl);
-		const resolvedModel = resolveBeamModel(provider, configuredModel, process.env['ANTHROPIC_MODEL']);
+		const baseUrl = configuredBaseUrl || DEFAULT_BEAM_BASE_URL;
+		const resolvedModel = resolveBeamModel(provider, configuredModel, undefined);
 		const modelOption = getBeamModelOption(resolvedModel);
 		return {
 			provider,
 			configuredProvider,
 			baseUrl,
-			apiKey: useCodexAnthropicProxy ? codexOpenAIConfiguration.apiKey : process.env['ANTHROPIC_API_KEY']?.trim() || undefined,
-			authToken: useCodexAnthropicProxy ? codexOpenAIConfiguration.apiKey : process.env['ANTHROPIC_AUTH_TOKEN']?.trim() || undefined,
 			model: modelOption?.id ?? resolvedModel,
 			requestModel: modelOption?.requestModel ?? resolvedModel,
 			anthropicBeta: modelOption?.anthropicBeta,
@@ -599,16 +645,56 @@ export class BeamService extends vscode.Disposable {
 		};
 	}
 
-	private getCodexOpenAIConfiguration(): ICodexOpenAIConfiguration {
-		if (!this.codexOpenAIConfiguration) {
-			this.codexOpenAIConfiguration = readCodexOpenAIConfiguration();
+	async configureAccessToken(): Promise<void> {
+		const token = await this.promptForAccessToken();
+		if (!token) {
+			return;
 		}
 
-		return this.codexOpenAIConfiguration;
+		void vscode.window.showInformationMessage(vscode.l10n.t('Beam 访问令牌已保存。'));
 	}
 
 	private getAvailableModels(_configuration: IBeamProviderConfiguration): readonly IBeamModelOption[] {
 		return getBeamModelOptions();
+	}
+
+	private async ensureAccessToken(): Promise<string | undefined> {
+		if (this.accessToken) {
+			return this.accessToken;
+		}
+
+		const storedToken = normalizeStoredAccessToken(this.globalState.get<string>(ACCESS_TOKEN_STORAGE_KEY));
+		if (storedToken) {
+			this.accessToken = storedToken;
+			return storedToken;
+		}
+
+		return this.promptForAccessToken();
+	}
+
+	private async promptForAccessToken(): Promise<string | undefined> {
+		if (!this.accessTokenPrompt) {
+			this.accessTokenPrompt = (async () => {
+				const token = await vscode.window.showInputBox({
+					prompt: vscode.l10n.t('请输入 Beam 访问令牌。保存后即可继续发送请求。'),
+					placeHolder: vscode.l10n.t('输入你的访问令牌'),
+					password: true,
+					ignoreFocusOut: true
+				});
+				const normalizedToken = normalizeStoredAccessToken(token);
+				if (!normalizedToken) {
+					return undefined;
+				}
+
+				this.accessToken = normalizedToken;
+				await this.globalState.update(ACCESS_TOKEN_STORAGE_KEY, normalizedToken);
+				return normalizedToken;
+			})().finally(() => {
+				this.accessTokenPrompt = undefined;
+			});
+		}
+
+		return this.accessTokenPrompt;
 	}
 
 	private resolveAnthropicEndpoint(baseUrl: string): string {
@@ -644,23 +730,34 @@ export class BeamService extends vscode.Disposable {
 	}
 
 	private reportModelProgress(progress: vscode.Progress<{ message?: string; increment?: number }> | undefined, round: number): void {
-		progress?.report({
-			message: round === 0 ? vscode.l10n.t('\u6b63\u5728\u8bf7\u6c42\u6a21\u578b\u54cd\u5e94...') : vscode.l10n.t('\u6b63\u5728\u7ee7\u7eed\u5904\u7406\u5de5\u5177\u7ed3\u679c...')
-		});
+		const message = round === 0
+			? vscode.l10n.t('正在分析需求并决定先检查什么...')
+			: vscode.l10n.t('正在根据刚才的结果继续判断下一步...');
+		this.workingLabel = message;
+		progress?.report({ message });
+		this._onDidChangeState.fire(this.getState());
 	}
 
-	private recordAssistantProgress(assistantText: string): void {
+	private recordAssistantProgress(assistantText: string, round: number): void {
 		if (!assistantText) {
 			return;
 		}
 
-		this.messages = [...this.messages, { role: 'assistant', content: assistantText }];
+		this.messages = [...this.messages, {
+			role: 'thinking',
+			content: assistantText,
+			metadata: {
+				title: createThinkingTitle(assistantText, round),
+				round: round + 1
+			}
+		}];
 		this.persistState();
 		this._onDidChangeState.fire(this.getState());
 	}
 
 	private async invokeTools(
 		toolUses: readonly IProviderToolUse[],
+		round: number,
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
 		token?: vscode.CancellationToken
 	): Promise<Array<{ readonly id: string; readonly content: string }>> {
@@ -673,23 +770,34 @@ export class BeamService extends vscode.Disposable {
 			this.throwIfCancelled(token);
 
 			const toolUse = toolUses[index];
-			progress?.report({
-				message: vscode.l10n.t('\u6b63\u5728\u6267\u884c\uff1a{0} ({1}/{2})', toolUse.name, index + 1, toolUses.length)
-			});
+			const toolDisplayName = getToolDisplayName(toolUse.name);
+			const progressMessage = vscode.l10n.t('正在执行：{0} ({1}/{2})', toolDisplayName, index + 1, toolUses.length);
+			this.workingLabel = progressMessage;
+			progress?.report({ message: progressMessage });
+			this._onDidChangeState.fire(this.getState());
 			const result = await this.toolService.invoke(toolUse.name, toolUse.input);
 			this.throwIfCancelled(token);
 			const content = result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
-			this.messages = [...this.messages, { role: 'tool', content, metadata: { toolName: result.toolName } }];
+			this.messages = [...this.messages, {
+				role: 'tool',
+				content,
+				metadata: {
+					toolName: result.toolName,
+					title: toolDisplayName,
+					round: round + 1
+				}
+			}];
 			this.pendingToolNames = pendingToolNames.slice(index + 1);
 			toolResultBlocks.push({
 				id: toolUse.id,
 				content
 			});
+			this.persistState();
 			this._onDidChangeState.fire(this.getState());
 		}
 
+		this.workingLabel = vscode.l10n.t('正在整理检查结果并准备下一步...');
 		this.pendingToolNames = [];
-		this.persistState();
 		this._onDidChangeState.fire(this.getState());
 		return toolResultBlocks;
 	}
@@ -736,9 +844,47 @@ export class BeamService extends vscode.Disposable {
 		void this.storage.update(ACTIVE_SESSION_STORAGE_KEY, activeSessionId);
 	}
 
+	private async postJsonWithRetry<T>(
+		urlString: string,
+		headers: Record<string, string>,
+		body: unknown,
+		token?: vscode.CancellationToken,
+		progress?: vscode.Progress<{ message?: string; increment?: number }>
+	): Promise<IJsonResponse<T>> {
+		let lastError: Error | undefined;
+
+		for (let attempt = 0; attempt < MAX_REQUEST_ATTEMPTS; attempt++) {
+			this.throwIfCancelled(token);
+			try {
+				return await postJson<T>(urlString, headers, body, token);
+			} catch (error) {
+				const normalizedError = error instanceof Error ? error : new Error(String(error));
+				lastError = normalizedError;
+				if (!shouldRetryBeamRequest(normalizedError) || attempt >= MAX_REQUEST_ATTEMPTS - 1) {
+					break;
+				}
+
+				const retryIndex = attempt + 1;
+				const waitMs = REQUEST_RETRY_BACKOFF_MS[Math.min(attempt, REQUEST_RETRY_BACKOFF_MS.length - 1)] ?? REQUEST_RETRY_BACKOFF_MS[REQUEST_RETRY_BACKOFF_MS.length - 1];
+				const retryMessage = vscode.l10n.t('服务暂时不可用，正在自动重试 ({0}/{1})...', retryIndex, MAX_REQUEST_ATTEMPTS - 1);
+				this.workingLabel = retryMessage;
+				progress?.report({ message: retryMessage });
+				this._onDidChangeState.fire(this.getState());
+				this.log(vscode.l10n.t('Beam 请求异常，准备第 {0} 次重试：{1}', retryIndex, normalizedError.message));
+				await sleep(waitMs, token);
+			}
+		}
+
+		if (lastError && isGatewayRetryableError(lastError.message)) {
+			throw new Error(vscode.l10n.t('Beam 服务暂时不可用，已自动重试多次。请稍后再试。'));
+		}
+
+		throw lastError ?? new Error(vscode.l10n.t('Beam 请求失败。'));
+	}
+
 	private buildInitialTurns(attachments?: IBeamComposerResolvedAttachments): IRequestTurn[] {
 		const turns = this.messages
-			.filter(message => message.role !== 'system' && message.role !== 'tool')
+			.filter(message => message.role !== 'system' && message.role !== 'tool' && message.role !== 'thinking')
 			.slice(-REQUEST_HISTORY_LIMIT)
 			.map<IRequestTurn>((message, index, array) => {
 				if (message.role === 'assistant') {
@@ -946,7 +1092,7 @@ function toBeamOpenAIChatCompletionBlocks(message: IOpenAIChatCompletionMessage 
 function isBeamChatMessage(value: IBeamChatMessage | undefined): value is IBeamChatMessage {
 	return Boolean(
 		value &&
-		(value.role === 'user' || value.role === 'assistant' || value.role === 'system' || value.role === 'tool') &&
+		(value.role === 'user' || value.role === 'assistant' || value.role === 'system' || value.role === 'tool' || value.role === 'thinking') &&
 		typeof value.content === 'string'
 	);
 }
@@ -963,7 +1109,7 @@ function isBeamChatSessionRecord(value: IBeamChatSessionRecord | undefined): val
 }
 
 function toSessionSummary(session: IBeamChatSessionRecord): IBeamChatSessionSummary {
-	const lastMessage = [...session.messages].reverse().find(message => message.role !== 'tool') || session.messages[session.messages.length - 1];
+	const lastMessage = [...session.messages].reverse().find(message => message.role !== 'tool' && message.role !== 'thinking') || session.messages[session.messages.length - 1];
 	return {
 		id: session.id,
 		title: session.title,
@@ -979,6 +1125,55 @@ function createSessionTitle(prompt: string): string {
 	}
 
 	return truncateTextValue(singleLine, MAX_SESSION_TITLE_LENGTH);
+}
+
+function createThinkingTitle(text: string, round: number): string {
+	const singleLine = text.replace(/\s+/g, ' ').trim();
+	if (!singleLine) {
+		return vscode.l10n.t('第 {0} 轮分析', round + 1);
+	}
+
+	const firstSentence = singleLine.split(/(?<=[。！？!?])/)[0]?.trim() || singleLine;
+	return truncateTextValue(firstSentence, 42);
+}
+
+function getToolDisplayName(toolName: string): string {
+	switch (toolName) {
+		case 'get_active_editor_context':
+			return vscode.l10n.t('读取当前上下文');
+		case 'read_file':
+			return vscode.l10n.t('读取文件');
+		case 'list_directory':
+			return vscode.l10n.t('列出目录');
+		case 'search_workspace':
+			return vscode.l10n.t('搜索工作区');
+		case 'get_diagnostics':
+			return vscode.l10n.t('获取诊断信息');
+		case 'open_file':
+			return vscode.l10n.t('打开文件');
+		case 'select_editor_range':
+			return vscode.l10n.t('选中范围');
+		case 'select_current_function':
+			return vscode.l10n.t('选中当前函数');
+		case 'select_current_block':
+			return vscode.l10n.t('扩展当前代码块');
+		case 'reveal_range':
+			return vscode.l10n.t('定位范围');
+		case 'create_edit_proposal':
+			return vscode.l10n.t('创建编辑提案');
+		case 'write_file':
+			return vscode.l10n.t('写入文件');
+		case 'create_file':
+			return vscode.l10n.t('创建文件');
+		case 'delete_file':
+			return vscode.l10n.t('删除文件');
+		case 'replace_in_file':
+			return vscode.l10n.t('替换文件内容');
+		case 'run_command':
+			return vscode.l10n.t('执行命令');
+		default:
+			return toolName;
+	}
 }
 
 function trimMessageContent(value: string): string {
@@ -1153,4 +1348,40 @@ function createRequestCancelledError(): Error {
 function getResponseErrorMessage(value: unknown): string | undefined {
 	const maybeError = (value as { error?: { message?: unknown } }).error;
 	return typeof maybeError?.message === 'string' ? maybeError.message : undefined;
+}
+
+function normalizeStoredAccessToken(value: string | undefined): string | undefined {
+	const normalized = value?.trim();
+	return normalized ? normalized : undefined;
+}
+
+function shouldRetryBeamRequest(error: Error): boolean {
+	return isGatewayRetryableError(error.message)
+		|| /timeout|timed out|socket hang up|econnreset|econnrefused|enotfound|temporarily unavailable/i.test(error.message);
+}
+
+function isGatewayRetryableError(message: string): boolean {
+	return /状态码：\s*(502|503|504)\b/.test(message)
+		|| /\b(502|503|504)\b/.test(message) && /gateway|bad gateway|service unavailable|time-?out|non json/i.test(message);
+}
+
+function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const handle = setTimeout(() => {
+			disposable?.dispose();
+			resolve();
+		}, ms);
+
+		const disposable = token?.onCancellationRequested(() => {
+			clearTimeout(handle);
+			disposable?.dispose();
+			reject(createRequestCancelledError());
+		});
+
+		if (token?.isCancellationRequested) {
+			clearTimeout(handle);
+			disposable?.dispose();
+			reject(createRequestCancelledError());
+		}
+	});
 }

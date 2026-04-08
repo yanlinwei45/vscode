@@ -48,6 +48,7 @@ const OPEN_SESSION_COMMAND = "beam.openSession";
 const ADD_SELECTION_TO_CHAT_STATUS_COMMAND =
 	"beam.addSelectionToChatFromStatus";
 const ADD_ATTACHMENT_COMMAND = "beam.addAttachment";
+const CONFIGURE_ACCESS_TOKEN_COMMAND = "beam.configureAccessToken";
 
 export function activate(context: vscode.ExtensionContext): void {
 	const outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
@@ -64,8 +65,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 	const service = new BeamService(
 		context.workspaceState,
+		context.globalState,
 		outputChannel,
-		toolService,
+		toolService
 	);
 	const provider = new BeamSidebarProvider(
 		context.extensionUri,
@@ -220,6 +222,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand(CONFIGURE_ACCESS_TOKEN_COMMAND, async () => {
+			await service.configureAccessToken();
+		}),
+	);
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand("beam.showLogs", () => {
 			service.showOutput();
 		}),
@@ -284,8 +292,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand(REJECT_PROPOSAL_COMMAND, () => {
-			proposalService.rejectActiveProposal();
+		vscode.commands.registerCommand(REJECT_PROPOSAL_COMMAND, async () => {
+			await proposalService.rejectActiveProposal();
 		}),
 	);
 
