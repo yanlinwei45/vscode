@@ -44,7 +44,7 @@ async function createDmg(buildDir: string, outDir: string, dmgPath: string, arch
 		stdio: 'inherit',
 	});
 
-	const createdDmgPath = path.join(tempOutDir, `VSCode-darwin-${arch}.dmg`);
+	const createdDmgPath = path.join(tempOutDir, `Beam-darwin-${arch}.dmg`);
 	if (!fs.existsSync(createdDmgPath)) {
 		throw new Error(`DMG was not created at expected path: ${createdDmgPath}`);
 	}
@@ -79,10 +79,10 @@ async function main(buildDir = path.dirname(root), outDir = path.dirname(root)):
 
 	const arch = process.env['VSCODE_ARCH'] ?? 'arm64';
 	const quality = process.env['VSCODE_QUALITY'] ?? 'stable';
-	const appRoot = path.join(buildDir, `VSCode-darwin-${arch}`);
+	const appRoot = resolveDarwinBuildRoot(buildDir, arch);
 	const appName = `${product.nameLong}.app`;
 	const appPath = path.join(appRoot, appName);
-	const artifactBaseName = `VSCode-darwin-${arch}-internal-test`;
+	const artifactBaseName = `Beam-darwin-${arch}-internal-test`;
 	const zipPath = path.join(outDir, `${artifactBaseName}.zip`);
 	const dmgPath = path.join(outDir, `${artifactBaseName}.dmg`);
 
@@ -104,6 +104,21 @@ async function main(buildDir = path.dirname(root), outDir = path.dirname(root)):
 	console.log(`  ${zipPath}`);
 	console.log(`  ${dmgPath}`);
 	console.log(`  ${path.join(outDir, `${artifactBaseName}-README.txt`)}`);
+}
+
+function resolveDarwinBuildRoot(buildDir: string, arch: string): string {
+	const candidates = [
+		path.join(buildDir, `Beam-darwin-${arch}`),
+		path.join(buildDir, `VSCode-darwin-${arch}`)
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return candidates[0];
 }
 
 if (import.meta.main) {

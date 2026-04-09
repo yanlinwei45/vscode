@@ -376,6 +376,12 @@
           "default": "https://code.api.audiozen.cn/v1",
           "description": "%config.baseUrl.description%",
           "scope": "application"
+        },
+        "beam.inlineCompletions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inlineCompletions.enabled.description%",
+          "scope": "application"
         }
       }
     }

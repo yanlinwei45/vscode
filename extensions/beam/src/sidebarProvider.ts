@@ -610,6 +610,24 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			min-width: 0;
 			flex: 1;
 		}
+		.workflow-summary-lines {
+			display: grid;
+			gap: 4px;
+			margin-top: 4px;
+		}
+		.workflow-summary-line {
+			font-size: 12px;
+			line-height: 1.45;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+		.workflow-summary-line.section {
+			font-weight: 700;
+		}
+		.workflow-summary-line.detail {
+			opacity: 0.82;
+			padding-left: 10px;
+		}
 		.workflow-summary-hint {
 			font-size: 11px;
 			opacity: 0.62;
@@ -632,6 +650,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			display: grid;
 			gap: 8px;
 			margin-top: 8px;
+		}
+		.workflow-items[hidden] {
+			display: none;
 		}
 		.workflow-item {
 			padding: 9px 10px;
@@ -664,6 +685,50 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		.workflow-item-body {
 			display: grid;
 			gap: 8px;
+		}
+		.workflow-tool-card {
+			display: grid;
+			gap: 8px;
+			padding: 9px 10px;
+			border-radius: 12px;
+			border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 78%, transparent);
+			background: color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
+		}
+		.workflow-tool-summary {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+			flex-wrap: wrap;
+		}
+		.workflow-tool-summary-text {
+			font-size: 12px;
+			font-weight: 700;
+		}
+		.workflow-tool-meta {
+			font-size: 11px;
+			opacity: 0.7;
+		}
+		.workflow-tool-list {
+			display: grid;
+			gap: 5px;
+		}
+		.workflow-tool-row {
+			font-size: 12px;
+			line-height: 1.45;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+		.workflow-tool-row.file {
+			font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+			font-size: 12px;
+		}
+		.workflow-tool-row.dim {
+			opacity: 0.8;
+		}
+		.workflow-tool-more {
+			font-size: 11px;
+			opacity: 0.66;
 		}
 		.change-summary {
 			display: grid;
@@ -1513,6 +1578,180 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			container.appendChild(card);
 		}
 
+		function parseToolMessageSummary(message) {
+			if (!message || message.role !== 'tool') {
+				return undefined;
+			}
+
+			const source = String(message.content || '');
+			const lines = source.split('\n').map(line => line.trim()).filter(Boolean);
+			if (!lines.length) {
+				return undefined;
+			}
+
+			const summaryLine = lines.find(line => line.startsWith('摘要：'));
+			const bullets = lines.filter(line => line.startsWith('-- '));
+			if (!summaryLine && !bullets.length) {
+				return undefined;
+			}
+
+			const details = lines.filter(line => !line.startsWith('摘要：') && !line.startsWith('-- '));
+			return {
+				summary: summaryLine ? summaryLine.slice('摘要：'.length).trim() : (message.metadata?.title || ''),
+				items: bullets,
+				details
+			};
+		}
+
+		function isCompactFileSummaryRow(value) {
+			return /^\-\-\s+.+?(\s{2,}[+\-~]\d+.*|\s{2,}>|\s{2,}[+\-~]\d+.*\s{2,}>)$/.test(value);
+		}
+
+		function toUniqueList(items) {
+			const seen = new Set();
+			const result = [];
+			for (const item of items) {
+				if (!item || seen.has(item)) {
+					continue;
+				}
+				seen.add(item);
+				result.push(item);
+			}
+			return result;
+		}
+
+		function createWorkflowPreviewSections(messages) {
+			const readFiles = [];
+			const diagnostics = [];
+			const replacements = [];
+			const sections = [];
+
+			for (const message of messages) {
+				if (message.role !== 'tool') {
+					continue;
+				}
+
+				const parsed = parseToolMessageSummary(message);
+				const toolName = message.metadata?.toolName;
+				const items = parsed?.items.map(item => item.replace(/^\-\-\s*/, '').trim()).filter(Boolean) || [];
+
+				switch (toolName) {
+					case 'read_file':
+						readFiles.push(...items);
+						break;
+					case 'get_diagnostics':
+						diagnostics.push(...items);
+						break;
+					case 'replace_in_file':
+					case 'write_file':
+					case 'create_file':
+					case 'delete_file':
+					case 'create_edit_proposal':
+						replacements.push(...items);
+						break;
+					default:
+						if (parsed?.summary || items.length) {
+							sections.push({
+								title: parsed?.summary || (message.metadata?.title || ${JSON.stringify(toolLabelFallback)}),
+								items
+							});
+						}
+						break;
+				}
+			}
+
+			const previewSections = [];
+			const readItems = toUniqueList(readFiles);
+			if (readItems.length) {
+				previewSections.push({
+					title: '读取了 ' + readItems.length + ' 个文件',
+					items: readItems.map(item => '-- ' + item)
+				});
+			}
+
+			const diagnosticItems = toUniqueList(diagnostics);
+			if (diagnosticItems.length) {
+				previewSections.push({
+					title: '获取了 ' + diagnosticItems.length + ' 个文件的诊断信息',
+					items: diagnosticItems.map(item => '-- ' + item)
+				});
+			}
+
+			const replacementItems = toUniqueList(replacements);
+			if (replacementItems.length) {
+				previewSections.push({
+					title: '替换工作区',
+					items: replacementItems.map((item, index) => (index + 1) + '. ' + item)
+				});
+			}
+
+			return [...previewSections, ...sections];
+		}
+
+		function renderToolMessageCard(container, message) {
+			const summary = parseToolMessageSummary(message);
+			if (!summary) {
+				renderContent(container, message.content);
+				return;
+			}
+
+			const card = document.createElement('div');
+			card.className = 'workflow-tool-card';
+
+			const header = document.createElement('div');
+			header.className = 'workflow-tool-summary';
+
+			const summaryText = document.createElement('div');
+			summaryText.className = 'workflow-tool-summary-text';
+			summaryText.textContent = summary.summary || message.metadata?.title || (message.metadata?.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)});
+			header.appendChild(summaryText);
+
+			const meta = document.createElement('div');
+			meta.className = 'workflow-tool-meta';
+			meta.textContent = message.metadata?.title || (message.metadata?.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)});
+			header.appendChild(meta);
+
+			card.appendChild(header);
+
+			if (summary.items.length) {
+				const list = document.createElement('div');
+				list.className = 'workflow-tool-list';
+				for (const itemText of summary.items.slice(0, 6)) {
+					const row = document.createElement('div');
+					row.className = isCompactFileSummaryRow(itemText) ? 'workflow-tool-row file' : 'workflow-tool-row';
+					row.textContent = itemText;
+					list.appendChild(row);
+				}
+				if (summary.items.length > 6) {
+					const more = document.createElement('div');
+					more.className = 'workflow-tool-more';
+					more.textContent = ${JSON.stringify(vscode.l10n.t('还有更多项，展开可查看完整内容'))};
+					list.appendChild(more);
+				}
+				card.appendChild(list);
+			}
+
+			if (summary.details.length) {
+				const detailBox = document.createElement('details');
+				detailBox.className = 'tool-details';
+
+				const detailSummary = document.createElement('summary');
+				detailSummary.textContent = ${JSON.stringify(expandDetailsLabel)};
+				detailBox.appendChild(detailSummary);
+
+				for (const line of summary.details) {
+					const row = document.createElement('div');
+					row.className = 'workflow-tool-row dim';
+					row.textContent = line;
+					detailBox.appendChild(row);
+				}
+
+				card.appendChild(detailBox);
+			}
+
+			container.appendChild(card);
+		}
+
 		function createToolDisplayItems(messages) {
 			const displayItems = [];
 			for (const message of messages) {
@@ -1547,6 +1786,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		function renderToolGroup(container, messages) {
 			const group = document.createElement('details');
 			group.className = 'workflow-group';
+			group.open = false;
 
 			const summary = document.createElement('summary');
 			summary.className = 'workflow-summary';
@@ -1563,6 +1803,26 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			hint.className = 'workflow-summary-hint';
 			hint.textContent = ${JSON.stringify(expandDetailsLabel)};
 			summaryCopy.appendChild(hint);
+
+			const previewSections = createWorkflowPreviewSections(messages);
+			if (previewSections.length) {
+				const summaryLines = document.createElement('div');
+				summaryLines.className = 'workflow-summary-lines';
+				for (const section of previewSections.slice(0, 4)) {
+					const titleLine = document.createElement('div');
+					titleLine.className = 'workflow-summary-line section';
+					titleLine.textContent = section.title;
+					summaryLines.appendChild(titleLine);
+
+					for (const item of section.items.slice(0, 4)) {
+						const detailLine = document.createElement('div');
+						detailLine.className = 'workflow-summary-line detail';
+						detailLine.textContent = item;
+						summaryLines.appendChild(detailLine);
+					}
+				}
+				summaryCopy.appendChild(summaryLines);
+			}
 			summary.appendChild(summaryCopy);
 
 			const count = document.createElement('div');
@@ -1571,18 +1831,12 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			summary.appendChild(count);
 			group.appendChild(summary);
 
-			const preview = document.createElement('div');
-			preview.className = 'workflow-preview-list';
-			for (const message of messages.slice(0, 6)) {
-				const chip = document.createElement('div');
-				chip.className = 'workflow-preview-chip';
-				chip.textContent = message.metadata?.title || (message.metadata?.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : (message.role === 'thinking' ? ${JSON.stringify(thinkingStepLabel)} : ${JSON.stringify(toolLabelFallback)}));
-				preview.appendChild(chip);
-			}
-			group.appendChild(preview);
-
 			const items = document.createElement('div');
 			items.className = 'workflow-items';
+			items.hidden = true;
+			group.addEventListener('toggle', () => {
+				items.hidden = !group.open;
+			});
 			for (const message of messages) {
 				const item = document.createElement('div');
 				item.className = message.role === 'thinking' ? 'workflow-item thinking' : 'workflow-item';
@@ -1608,7 +1862,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 				const body = document.createElement('div');
 				body.className = 'workflow-item-body';
-				renderContent(body, message.content);
+				if (message.role === 'tool') {
+					renderToolMessageCard(body, message);
+				} else {
+					renderContent(body, message.content);
+				}
 				item.appendChild(body);
 
 				items.appendChild(item);

@@ -7,7 +7,7 @@ import * as http from 'http';
 import * as https from 'https';
 import * as vscode from 'vscode';
 import type { IBeamComposerResolvedAttachments } from './composerService';
-import { buildSystemPrompt } from './promptPolicy';
+import { buildInlineCompletionSystemPrompt, buildSystemPrompt } from './promptPolicy';
 import { buildOpenAIChatCompletionMessages, getBeamModelOption, getBeamModelOptions, inferBeamProviderForModel, normalizeBeamModelSelection, normalizeBeamProvider, parseOpenAIFunctionArguments, resolveBeamModel, toOpenAIChatCompletionTools, type BeamProvider, type IBeamModelOption, type IBeamTurnContentBlock, type IRequestTurn } from './providerUtils';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
 
@@ -17,8 +17,8 @@ const SELECTED_MODEL_STORAGE_KEY = 'beam.selectedModel.v1';
 const ACCESS_TOKEN_STORAGE_KEY = 'beam.accessToken.v2';
 const REQUEST_HISTORY_LIMIT = 30;
 const REQUEST_TIMEOUT_MS = 120000;
-const MAX_REQUEST_ATTEMPTS = 3;
-const REQUEST_RETRY_BACKOFF_MS = [1500, 3000];
+const MAX_REQUEST_ATTEMPTS = 6;
+const REQUEST_RETRY_BACKOFF_MS = [1500, 3000, 5000, 8000, 12000];
 const MAX_SESSIONS = 20;
 const MAX_HISTORY_CHAR_BUDGET = 24000;
 const MAX_MESSAGE_CHAR_BUDGET = 6000;
@@ -64,6 +64,11 @@ export interface IBeamChatSessionSummary {
 	readonly title: string;
 	readonly preview: string;
 	readonly updatedAt: number;
+}
+
+export interface IBeamTextRequestOptions {
+	readonly silentAuth?: boolean;
+	readonly maxTokens?: number;
 }
 
 interface IAnthropicBase64Source {
@@ -184,6 +189,7 @@ interface IOpenAIChatCompletionsRequest {
 	readonly messages: readonly IOpenAIChatCompletionMessage[];
 	readonly tools?: readonly IOpenAIChatCompletionToolDefinition[];
 	readonly tool_choice?: 'auto';
+	readonly max_tokens?: number;
 }
 
 interface IOpenAIChatCompletionsResponse {
@@ -339,6 +345,35 @@ export class BeamService extends vscode.Disposable {
 		await this.sendUserMessageWithAttachments(prompt, requestContext);
 	}
 
+	async requestInlineCompletion(prompt: string, options?: IBeamTextRequestOptions, token?: vscode.CancellationToken): Promise<string | undefined> {
+		const trimmed = prompt.trim();
+		if (!trimmed) {
+			return undefined;
+		}
+
+		const configuration = await this.getRequestConfiguration(options);
+		if (!configuration) {
+			return undefined;
+		}
+
+		const inlineConfiguration: IBeamProviderConfiguration = {
+			...configuration,
+			systemPrompt: buildInlineCompletionSystemPrompt(vscode.workspace.getConfiguration('beam').get<string>('systemPrompt')?.trim())
+		};
+
+		const turns: IRequestTurn[] = [{
+			role: 'user',
+			content: [{
+				type: 'text',
+				text: trimmed
+			}]
+		}];
+
+		const content = await this.requestPlainTextResponse(inlineConfiguration, turns, options, token);
+		const normalized = normalizeInlineCompletionResponse(content);
+		return normalized || undefined;
+	}
+
 	async sendUserMessageWithAttachments(prompt: string, requestContext?: string, attachments?: IBeamComposerResolvedAttachments): Promise<void> {
 		const trimmed = prompt.trim();
 		const hasAttachmentPayload = Boolean(attachments?.context || attachments?.images.length || attachments?.documents.length);
@@ -367,13 +402,14 @@ export class BeamService extends vscode.Disposable {
 			this.messages = [...this.messages, { role: 'assistant', content }];
 			this.persistState();
 		} catch (error) {
-			const message = error instanceof Error ? error.message : vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\u3002');
+			const rawMessage = error instanceof Error ? error.message : vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\u3002');
+			const message = toUserFacingBeamErrorMessage(rawMessage);
 			if (this.activeRequestCancellation.token.isCancellationRequested && /已取消/.test(message)) {
 				this.log(vscode.l10n.t('Beam 请求已由用户取消。'));
 				return;
 			}
-			this.log(vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\uff1a{0}', message));
-			this.messages = [...this.messages, { role: 'assistant', content: `\u9519\u8bef\uff1a${message}` }];
+			this.log(vscode.l10n.t('Beam 请求失败：{0}', rawMessage));
+			this.messages = [...this.messages, { role: 'assistant', content: message }];
 			this.persistState();
 		} finally {
 			this.busy = false;
@@ -408,6 +444,19 @@ export class BeamService extends vscode.Disposable {
 		}
 
 		return this.requestAnthropicResponse(configuration, progress, token, attachments);
+	}
+
+	private async requestPlainTextResponse(
+		configuration: IBeamProviderConfiguration,
+		turns: readonly IRequestTurn[],
+		options?: IBeamTextRequestOptions,
+		token?: vscode.CancellationToken
+	): Promise<string> {
+		if (configuration.provider === 'openai') {
+			return this.requestOpenAIPlainTextResponse(configuration, turns, options, token);
+		}
+
+		return this.requestAnthropicPlainTextResponse(configuration, turns, options, token);
 	}
 
 	private async requestAnthropicResponse(
@@ -507,6 +556,50 @@ export class BeamService extends vscode.Disposable {
 		}
 	}
 
+	private async requestAnthropicPlainTextResponse(
+		configuration: IBeamProviderConfiguration,
+		turns: readonly IRequestTurn[],
+		options?: IBeamTextRequestOptions,
+		token?: vscode.CancellationToken
+	): Promise<string> {
+		const { baseUrl, apiKey, authToken, requestModel: model, anthropicBeta, systemPrompt } = configuration;
+		if (!apiKey && !authToken) {
+			throw new Error(vscode.l10n.t('使用 Beam 前，请先输入访问令牌。'));
+		}
+
+		const endpoint = this.resolveAnthropicEndpoint(baseUrl);
+		const body: IAnthropicRequest = {
+			model,
+			system: systemPrompt,
+			max_tokens: options?.maxTokens ?? 512,
+			messages: turns.map(turn => ({
+				role: turn.role,
+				content: turn.content.map(toAnthropicContentBlock)
+			}))
+		};
+
+		this.log(vscode.l10n.t('正在向 {0} 发送 Beam 文本请求，模型：{1}。', endpoint, model));
+		const response = await this.postJsonWithRetry<IAnthropicResponse>(
+			endpoint,
+			{
+				'content-type': 'application/json',
+				'anthropic-version': '2023-06-01',
+				'anthropic-beta': anthropicBeta ?? '',
+				'x-api-key': apiKey ?? '',
+				'authorization': authToken ? `Bearer ${authToken}` : ''
+			},
+			body,
+			token
+		);
+		this.throwIfCancelled(token);
+		const assistantText = extractAnthropicResponseText(response.body).trim();
+		if (!assistantText) {
+			throw new Error(response.body.error?.message || vscode.l10n.t('Beam 返回了空响应。'));
+		}
+
+		return assistantText;
+	}
+
 	private async requestOpenAIResponse(
 		configuration: IBeamProviderConfiguration,
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
@@ -578,6 +671,43 @@ export class BeamService extends vscode.Disposable {
 		}
 	}
 
+	private async requestOpenAIPlainTextResponse(
+		configuration: IBeamProviderConfiguration,
+		turns: readonly IRequestTurn[],
+		options?: IBeamTextRequestOptions,
+		token?: vscode.CancellationToken
+	): Promise<string> {
+		const { baseUrl, apiKey, requestModel: model, systemPrompt } = configuration;
+		if (!apiKey) {
+			throw new Error(vscode.l10n.t('使用 Beam 前，请先输入访问令牌。'));
+		}
+
+		const endpoint = this.resolveOpenAIChatCompletionsEndpoint(baseUrl);
+		const body: IOpenAIChatCompletionsRequest = {
+			model,
+			messages: buildOpenAIChatCompletionMessages(systemPrompt, turns),
+			max_tokens: options?.maxTokens ?? 512
+		};
+
+		this.log(vscode.l10n.t('正在向 {0} 发送 Beam OpenAI 文本请求，模型：{1}。', endpoint, model));
+		const response = await this.postJsonWithRetry<IOpenAIChatCompletionsResponse>(
+			endpoint,
+			{
+				'content-type': 'application/json',
+				'authorization': `Bearer ${apiKey}`
+			},
+			body,
+			token
+		);
+		this.throwIfCancelled(token);
+		const assistantText = extractOpenAIChatCompletionText(response.body.choices?.[0]?.message).trim();
+		if (!assistantText) {
+			throw new Error(response.body.error?.message || vscode.l10n.t('Beam 返回了空响应。'));
+		}
+
+		return assistantText;
+	}
+
 	private getConfiguration(): IBeamProviderConfiguration {
 		const configuration = vscode.workspace.getConfiguration('beam');
 		const configuredProvider = normalizeBeamProvider(configuration.get<string>('provider'));
@@ -588,9 +718,9 @@ export class BeamService extends vscode.Disposable {
 		return this.getConfigurationForProvider(inferredProvider, configuredProvider, configuredBaseUrl, configuredModel, systemPrompt);
 	}
 
-	private async getRequestConfiguration(): Promise<IBeamProviderConfiguration | undefined> {
+	private async getRequestConfiguration(options?: IBeamTextRequestOptions): Promise<IBeamProviderConfiguration | undefined> {
 		const configuration = this.getConfiguration();
-		const accessToken = await this.ensureAccessToken();
+		const accessToken = await this.ensureAccessToken(options?.silentAuth);
 		if (!accessToken) {
 			return undefined;
 		}
@@ -658,7 +788,7 @@ export class BeamService extends vscode.Disposable {
 		return getBeamModelOptions();
 	}
 
-	private async ensureAccessToken(): Promise<string | undefined> {
+	private async ensureAccessToken(silent?: boolean): Promise<string | undefined> {
 		if (this.accessToken) {
 			return this.accessToken;
 		}
@@ -667,6 +797,10 @@ export class BeamService extends vscode.Disposable {
 		if (storedToken) {
 			this.accessToken = storedToken;
 			return storedToken;
+		}
+
+		if (silent) {
+			return undefined;
 		}
 
 		return this.promptForAccessToken();
@@ -879,7 +1013,11 @@ export class BeamService extends vscode.Disposable {
 			throw new Error(vscode.l10n.t('Beam 服务暂时不可用，已自动重试多次。请稍后再试。'));
 		}
 
-		throw lastError ?? new Error(vscode.l10n.t('Beam 请求失败。'));
+		if (lastError) {
+			throw new Error(toUserFacingBeamErrorMessage(lastError.message));
+		}
+
+		throw new Error(vscode.l10n.t('Beam 请求失败。'));
 	}
 
 	private buildInitialTurns(attachments?: IBeamComposerResolvedAttachments): IRequestTurn[] {
@@ -1220,6 +1358,20 @@ function truncateTextValue(value: string, maxLength: number): string {
 	return `${value.slice(0, Math.max(0, maxLength - 8))} ...`;
 }
 
+function normalizeInlineCompletionResponse(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed || trimmed === '<NO_COMPLETION>') {
+		return '';
+	}
+
+	const fenceMatch = trimmed.match(/^```[\w-]*\n([\s\S]*?)\n```$/);
+	if (fenceMatch) {
+		return fenceMatch[1];
+	}
+
+	return value;
+}
+
 function postJson<T>(urlString: string, headers: Record<string, string>, body: unknown, token?: vscode.CancellationToken): Promise<IJsonResponse<T>> {
 	return new Promise((resolve, reject) => {
 		const url = new URL(urlString);
@@ -1357,12 +1509,42 @@ function normalizeStoredAccessToken(value: string | undefined): string | undefin
 
 function shouldRetryBeamRequest(error: Error): boolean {
 	return isGatewayRetryableError(error.message)
-		|| /timeout|timed out|socket hang up|econnreset|econnrefused|enotfound|temporarily unavailable/i.test(error.message);
+		|| hasRetryableStatusCode(error.message)
+		|| /timeout|timed out|socket hang up|econnreset|econnrefused|enotfound|temporarily unavailable|network error|fetch failed|upstream/i.test(error.message);
 }
 
 function isGatewayRetryableError(message: string): boolean {
 	return /状态码：\s*(502|503|504)\b/.test(message)
-		|| /\b(502|503|504)\b/.test(message) && /gateway|bad gateway|service unavailable|time-?out|non json/i.test(message);
+		|| /\b(502|503|504)\b/.test(message) && /gateway|bad gateway|service unavailable|time-?out|non json|html/i.test(message);
+}
+
+function hasRetryableStatusCode(message: string): boolean {
+	const matches = message.match(/\b(408|409|425|429|500|502|503|504)\b/g) ?? [];
+	return matches.length > 0;
+}
+
+function toUserFacingBeamErrorMessage(message: string): string {
+	if (/已取消/.test(message)) {
+		return message;
+	}
+
+	if (shouldRetryBeamRequest(new Error(message))) {
+		return vscode.l10n.t('Beam 服务暂时不可用，已自动重试多次。请稍后再试。');
+	}
+
+	if (/invalid x-api-key|unauthorized|forbidden|状态码：\s*(401|403)\b/i.test(message)) {
+		return vscode.l10n.t('访问令牌无效或已失效，请重新输入后再试。');
+	}
+
+	if (/状态码：\s*404\b|404 page not found/i.test(message)) {
+		return vscode.l10n.t('当前模型服务地址不可用，请检查 Base URL 或模型接口配置。');
+	}
+
+	if (/非 JSON 响应|unexpected token\s*</i.test(message)) {
+		return vscode.l10n.t('模型服务暂时返回了异常响应，请稍后再试。');
+	}
+
+	return message;
 }
 
 function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {

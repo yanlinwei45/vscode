@@ -16,6 +16,7 @@ import {
 import { BeamProposalService } from "./proposalService";
 import { BeamSidebarProvider } from "./sidebarProvider";
 import { BeamToolService } from "./toolService";
+import { BeamInlineCompletionProvider } from "./inlineCompletionProvider";
 
 const SIDEBAR_VIEW_ID = "beam.sidebar";
 const VIEW_CONTAINER_ID = "workbench.view.extension.beam";
@@ -83,6 +84,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(contextService);
 	context.subscriptions.push(proposalService);
 	context.subscriptions.push(provider);
+	context.subscriptions.push(
+		vscode.languages.registerInlineCompletionItemProvider(
+			[{ scheme: "file" }, { scheme: "untitled" }],
+			new BeamInlineCompletionProvider(service),
+		),
+	);
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_ID, provider, {
 			webviewOptions: { retainContextWhenHidden: true },

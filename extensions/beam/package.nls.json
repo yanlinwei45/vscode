@@ -37,5 +37,6 @@
 	"config.provider.description": "选择 Beam 使用的后端提供方。anthropic 使用 Claude 接口，openai 使用 OpenAI Chat Completions 接口。",
 	"config.model.description": "发送到当前 Beam 提供方时默认使用的模型标识。Anthropic 可配 Claude 模型，OpenAI 可配任意可用模型 ID。",
 	"config.baseUrl.description": "Beam 请求使用的基础地址。默认指向内置代理地址，你也可以手动修改。",
+	"config.inlineCompletions.enabled.description": "控制是否在编辑器中启用 Beam 的内联代码补全，并通过 Tab 直接接受建议。",
 	"config.accessToken.description": "Beam 的访问令牌需要在首次发送请求时手动输入，并安全保存在 VS Code 中。"
 }

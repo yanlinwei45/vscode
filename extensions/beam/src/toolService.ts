@@ -32,6 +32,13 @@ export interface IBeamToolCallResult {
 	readonly content: string;
 }
 
+interface IWorkspaceSearchMatch {
+	readonly file: string;
+	readonly line: number;
+	readonly column: number;
+	readonly text: string;
+}
+
 export class BeamToolService {
 
 	private readonly managedTerminals = new Set<vscode.Terminal>();
@@ -279,7 +286,12 @@ export class BeamToolService {
 	private async readFile(pathInput: unknown): Promise<string> {
 		const uri = this.resolveWorkspacePath(pathInput);
 		const document = await vscode.workspace.openTextDocument(uri);
-		return truncateText(document.getText(), MAX_READ_LENGTH);
+		return [
+			vscode.l10n.t('摘要：已读取 1 个文件'),
+			`-- ${getEditorLabel(uri)}`,
+			'',
+			truncateText(document.getText(), MAX_READ_LENGTH)
+		].join('\n');
 	}
 
 	private async listDirectory(pathInput: string): Promise<string> {
@@ -293,10 +305,10 @@ export class BeamToolService {
 
 	private async searchWorkspace(queryInput: unknown): Promise<string> {
 		const query = asString(queryInput, 'query');
-		const files = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,out,dist,build}/**', MAX_SEARCH_FILE_SCAN);
-		const results: string[] = [];
+		const workspaceFiles = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,out,dist,build}/**', MAX_SEARCH_FILE_SCAN);
+		const results: IWorkspaceSearchMatch[] = [];
 
-		for (const file of files) {
+		for (const file of workspaceFiles) {
 			if (results.length >= MAX_SEARCH_RESULTS) {
 				break;
 			}
@@ -313,12 +325,27 @@ export class BeamToolService {
 			while (index !== -1 && results.length < MAX_SEARCH_RESULTS) {
 				const position = document.positionAt(index);
 				const lineText = document.lineAt(position.line).text.trim();
-				results.push(`${getEditorLabel(file)}:${position.line + 1}:${position.character + 1} ${lineText}`);
+				results.push({
+					file: getEditorLabel(file),
+					line: position.line + 1,
+					column: position.character + 1,
+					text: lineText
+				});
 				index = text.indexOf(query, index + query.length);
 			}
 		}
 
-		return results.length ? results.join('\n') : vscode.l10n.t('\u6ca1\u6709\u627e\u5230\u5339\u914d\u7ed3\u679c\u3002');
+		if (!results.length) {
+			return vscode.l10n.t('\u6ca1\u6709\u627e\u5230\u5339\u914d\u7ed3\u679c\u3002');
+		}
+
+		const files = [...new Set(results.map(result => result.file))];
+		return [
+			vscode.l10n.t('摘要：已搜索到 {0} 个文件中的 {1} 条匹配', files.length, results.length),
+			...files.map(file => `-- ${file}`),
+			'',
+			...results.map(result => `${result.file}:${result.line}:${result.column} ${result.text}`)
+		].join('\n');
 	}
 
 	private async getDiagnostics(pathInput?: string): Promise<string> {
@@ -338,9 +365,14 @@ export class BeamToolService {
 			return vscode.l10n.t('\u6ca1\u6709\u8bca\u65ad\u4fe1\u606f\u3002');
 		}
 
-		return diagnostics.map(diagnostic => {
-			return `${formatSeverity(diagnostic.severity)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.message}`;
-		}).join('\n');
+		return [
+			vscode.l10n.t('摘要：{0} 中共有 {1} 条诊断信息', getEditorLabel(targetUri), diagnostics.length),
+			`-- ${getEditorLabel(targetUri)}`,
+			'',
+			...diagnostics.map(diagnostic => {
+				return `${formatSeverity(diagnostic.severity)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.message}`;
+			})
+		].join('\n');
 	}
 
 	private async openFile(input: Record<string, unknown>): Promise<string> {
@@ -586,23 +618,21 @@ export class BeamToolService {
 				? vscode.l10n.t('第 {0}-{1} 行', summary.firstChangeLine, summary.lastChangeLine)
 				: vscode.l10n.t('第 {0} 行', summary.firstChangeLine))
 			: vscode.l10n.t('整文件');
-		const statParts: string[] = [];
-		if (summary.addedLines) {
-			statParts.push(vscode.l10n.t('+{0} 行', summary.addedLines));
-		}
-		if (summary.deletedLines) {
-			statParts.push(vscode.l10n.t('-{0} 行', summary.deletedLines));
-		}
-		if (summary.modifiedLines) {
-			statParts.push(vscode.l10n.t('~{0} 行', summary.modifiedLines));
-		}
+		const statParts = formatCompactChangeStats(summary);
+		const summaryRowParts = [
+			summary.label,
+			...statParts,
+			linePart !== vscode.l10n.t('整文件') ? '>' : ''
+		].filter(Boolean);
 
 		return [
 			intro,
 			'',
+			vscode.l10n.t('摘要：已修改 1 个文件'),
+			`-- ${summaryRowParts.join('  ') || summary.label}`,
 			vscode.l10n.t('变更文件：{0}', summary.label),
 			vscode.l10n.t('位置：{0}', linePart),
-			vscode.l10n.t('统计：{0}', statParts.join('，') || vscode.l10n.t('存在代码差异')),
+			vscode.l10n.t('统计：{0}', statParts.join('  ') || vscode.l10n.t('存在代码差异')),
 			vscode.l10n.t('状态：已修改编辑器内容，可在 Beam 中接受或拒绝。'),
 		].join('\n');
 	}
@@ -682,6 +712,20 @@ function formatSeverity(severity: vscode.DiagnosticSeverity): string {
 
 function formatRange(range: vscode.Range): string {
 	return `${range.start.line + 1}:${range.start.character + 1}-${range.end.line + 1}:${range.end.character + 1}`;
+}
+
+function formatCompactChangeStats(summary: Pick<IBeamProposalChangeSummary, 'addedLines' | 'deletedLines' | 'modifiedLines'>): string[] {
+	const stats: string[] = [];
+	if (summary.addedLines) {
+		stats.push(`+${summary.addedLines}`);
+	}
+	if (summary.deletedLines) {
+		stats.push(`-${summary.deletedLines}`);
+	}
+	if (summary.modifiedLines) {
+		stats.push(`~${summary.modifiedLines}`);
+	}
+	return stats;
 }
 
 function stripAnsi(value: string): string {

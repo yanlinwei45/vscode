@@ -155,25 +155,14 @@ async function main(buildDir?: string, outDir?: string): Promise<void> {
 		throw new Error('Output directory argument is required');
 	}
 
-	const appRoot = path.join(buildDir, `VSCode-darwin-${arch}`);
+	const appRoot = resolveDarwinBuildRoot(buildDir, arch);
 	const appName = product.nameLong + '.app';
 	const appPath = path.join(appRoot, appName);
-	const dmgName = `VSCode-darwin-${arch}`;
+	const dmgName = `Beam-darwin-${arch}`;
 	const artifactPath = path.join(outDir, `${dmgName}.dmg`);
 	const backgroundPath = path.join(import.meta.dirname, `dmg-background-${quality}.tiff`);
 	const diskIconPath = path.join(root, 'resources', 'darwin', 'code.icns');
-	let title = 'Code OSS';
-	switch (quality) {
-		case 'stable':
-			title = 'VS Code';
-			break;
-		case 'insider':
-			title = 'VS Code Insiders';
-			break;
-		case 'exploration':
-			title = 'VS Code Exploration';
-			break;
-	}
+	const title = product.nameLong;
 
 	if (!fs.existsSync(appPath)) {
 		throw new Error(`App path does not exist: ${appPath}`);
@@ -214,6 +203,21 @@ async function main(buildDir?: string, outDir?: string): Promise<void> {
 
 	const stats = fs.statSync(artifactPath);
 	console.log(`Successfully created DMG: ${artifactPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+}
+
+function resolveDarwinBuildRoot(buildDir: string, arch: string): string {
+	const candidates = [
+		path.join(buildDir, `Beam-darwin-${arch}`),
+		path.join(buildDir, `VSCode-darwin-${arch}`)
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return candidates[0];
 }
 
 if (import.meta.main) {

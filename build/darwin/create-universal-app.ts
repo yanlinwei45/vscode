@@ -43,11 +43,14 @@ async function main(buildDir?: string) {
 
 	const product = JSON.parse(fs.readFileSync(path.join(root, 'product.json'), 'utf8'));
 	const appName = product.nameLong + '.app';
-	const x64AppPath = path.join(buildDir, 'VSCode-darwin-x64', appName);
-	const arm64AppPath = path.join(buildDir, 'VSCode-darwin-arm64', appName);
+	const x64Root = resolveDarwinBuildRoot(buildDir, 'x64');
+	const arm64Root = resolveDarwinBuildRoot(buildDir, 'arm64');
 	const asarRelativePath = path.join('Contents', 'Resources', 'app', 'node_modules.asar');
-	const outAppPath = path.join(buildDir, `VSCode-darwin-${arch}`, appName);
+	const outAppRoot = path.join(buildDir, `Beam-darwin-${arch}`);
+	const outAppPath = path.join(outAppRoot, appName);
 	const productJsonPath = path.resolve(outAppPath, 'Contents', 'Resources', 'app', 'product.json');
+	const x64AppPath = path.join(x64Root, appName);
+	const arm64AppPath = path.join(arm64Root, appName);
 
 	// Copilot SDK ships platform-specific native binaries that npm only installs
 	// for the host architecture. The universal app merger requires both builds to
@@ -101,6 +104,21 @@ async function main(buildDir?: string) {
 		darwinUniversalAssetId: 'darwin-universal'
 	});
 	fs.writeFileSync(productJsonPath, JSON.stringify(productJson, null, '\t'));
+}
+
+function resolveDarwinBuildRoot(buildDir: string, arch: string): string {
+	const candidates = [
+		path.join(buildDir, `Beam-darwin-${arch}`),
+		path.join(buildDir, `VSCode-darwin-${arch}`)
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return candidates[0];
 }
 
 if (import.meta.main) {

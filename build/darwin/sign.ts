@@ -75,7 +75,7 @@ async function main(buildDir?: string): Promise<void> {
 		throw new Error('$AGENT_TEMPDIRECTORY not set');
 	}
 
-	const appRoot = path.join(buildDir, `VSCode-darwin-${arch}`);
+	const appRoot = resolveDarwinBuildRoot(buildDir, arch!);
 	const appName = product.nameLong + '.app';
 	const infoPlistPath = path.resolve(appRoot, appName, 'Contents', 'Info.plist');
 
@@ -127,6 +127,21 @@ async function main(buildDir?: string): Promise<void> {
 	}
 
 	await retrySignOnKeychainError(() => sign(appOpts));
+}
+
+function resolveDarwinBuildRoot(buildDir: string, arch: string): string {
+	const candidates = [
+		path.join(buildDir, `Beam-darwin-${arch}`),
+		path.join(buildDir, `VSCode-darwin-${arch}`)
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return candidates[0];
 }
 
 if (import.meta.main) {
