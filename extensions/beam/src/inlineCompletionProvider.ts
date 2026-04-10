@@ -295,22 +295,22 @@ async function buildInlineCompletionPrompt(
 	const scopeContext = await createScopeContext(document, position);
 
 	const sections = [
-		`任务: 在 <CURSOR> 位置续写代码，只返回插入文本。`,
-		`语言: ${document.languageId || 'plaintext'}`,
-		`文件: ${document.uri.fsPath || document.uri.toString()}`,
-		`文件概况: 共 ${document.lineCount} 行，光标在第 ${position.line + 1} 行，第 ${position.character + 1} 列`,
-		fileContext.currentLine ? `当前行:\n${fileContext.currentLine}` : undefined,
-		fileContext.fileHeader ? `文件开头/导入与全局上下文:\n${fileContext.fileHeader}` : undefined,
-		scopeContext.symbolTrail ? `当前作用域:\n${scopeContext.symbolTrail}` : undefined,
-		scopeContext.scopeSnippet ? `当前函数/类附近实现:\n${scopeContext.scopeSnippet}` : undefined,
-		`光标附近代码（<CURSOR> 为补全位置）:\n${fileContext.nearbyCode}`,
+		'Task: Continue the code at <CURSOR>. Return only the text to insert.',
+		`Language: ${document.languageId || 'plaintext'}`,
+		`File: ${document.uri.fsPath || document.uri.toString()}`,
+		`File summary: ${document.lineCount} total lines, cursor at line ${position.line + 1}, column ${position.character + 1}`,
+		fileContext.currentLine ? `Current line:\n${fileContext.currentLine}` : undefined,
+		fileContext.fileHeader ? `File header / imports / global context:\n${fileContext.fileHeader}` : undefined,
+		scopeContext.symbolTrail ? `Current scope:\n${scopeContext.symbolTrail}` : undefined,
+		scopeContext.scopeSnippet ? `Implementation near the current function/class:\n${scopeContext.scopeSnippet}` : undefined,
+		`Code near the cursor (<CURSOR> marks the completion point):\n${fileContext.nearbyCode}`,
 		context.selectedCompletionInfo
-			? '要求: 基于当前选中的补全候选继续补全，并返回包含该候选文本在内的完整替换结果。'
-			: '要求: 只补全光标处接下来的代码，不能重复 prefix 中已经存在的内容。',
-		context.selectedCompletionInfo ? `当前补全候选:\n${context.selectedCompletionInfo.text}` : undefined,
-		`待替换文本:\n${promptContext.selectedText || '<EMPTY>'}`,
-		`精确 Prefix（光标前，不能重复）:\n${promptContext.prefix || '<EMPTY>'}`,
-		`精确 Suffix（光标后，需要自然衔接）:\n${promptContext.suffix || '<EMPTY>'}`
+			? 'Requirement: Continue from the currently selected completion candidate and return the full replacement text including that candidate.'
+			: 'Requirement: Continue only the code after the cursor and do not repeat content that already exists in the prefix.',
+		context.selectedCompletionInfo ? `Current completion candidate:\n${context.selectedCompletionInfo.text}` : undefined,
+		`Text being replaced:\n${promptContext.selectedText || '<EMPTY>'}`,
+		`Exact prefix (before the cursor, must not be repeated):\n${promptContext.prefix || '<EMPTY>'}`,
+		`Exact suffix (after the cursor, must connect naturally):\n${promptContext.suffix || '<EMPTY>'}`
 	];
 
 	const prompt = sections.filter((section): section is string => Boolean(section)).join('\n\n');
@@ -564,8 +564,8 @@ function createScopeSnippet(document: vscode.TextDocument, range: vscode.Range, 
 	const afterBudget = Math.floor(MAX_SCOPE_CHARS * 0.3);
 	const before = trimStartBoundary(scopeText.slice(0, relativeCursorOffset), beforeBudget);
 	const after = trimEndBoundary(scopeText.slice(relativeCursorOffset), afterBudget);
-	const prefix = before.length < relativeCursorOffset ? '...[已截断]\n' : '';
-	const suffix = relativeCursorOffset + after.length < scopeText.length ? '\n...[已截断]' : '';
+	const prefix = before.length < relativeCursorOffset ? '...[truncated]\n' : '';
+	const suffix = relativeCursorOffset + after.length < scopeText.length ? '\n...[truncated]' : '';
 	return `${prefix}${before}<CURSOR>${after}${suffix}`;
 }
 
@@ -574,7 +574,7 @@ function trimPromptPreservingTask(prompt: string, maxChars: number): string {
 		return prompt;
 	}
 
-	const marker = '光标附近代码（<CURSOR> 为补全位置）:';
+	const marker = 'Code near the cursor (<CURSOR> marks the completion point):';
 	const markerIndex = prompt.indexOf(marker);
 	if (markerIndex < 0) {
 		return prompt.slice(prompt.length - maxChars);

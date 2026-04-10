@@ -161,29 +161,29 @@ export class BeamComposerService extends vscode.Disposable {
 		}
 
 		const contentBlocks = [
-			`已附加选区：${snapshot.fileLabel}`,
-			`语言：${snapshot.language}`,
-			`范围：${snapshot.rangeLabel}`,
-			`行号：${snapshot.startLine}-${snapshot.endLine}`,
+			`Attached selection: ${snapshot.fileLabel}`,
+			`Language: ${snapshot.language}`,
+			`Range: ${snapshot.rangeLabel}`,
+			`Lines: ${snapshot.startLine}-${snapshot.endLine}`,
 			''
 		];
 
 		if (snapshot.contextBefore) {
-			contentBlocks.push('选区前文：');
+			contentBlocks.push('Context before selection:');
 			contentBlocks.push('```' + snapshot.language);
 			contentBlocks.push(snapshot.contextBefore);
 			contentBlocks.push('```');
 			contentBlocks.push('');
 		}
 
-		contentBlocks.push('选区内容：');
+		contentBlocks.push('Selected content:');
 		contentBlocks.push('```' + snapshot.language);
 		contentBlocks.push(snapshot.selectedText);
 		contentBlocks.push('```');
 
 		if (snapshot.contextAfter) {
 			contentBlocks.push('');
-			contentBlocks.push('选区后文：');
+			contentBlocks.push('Context after selection:');
 			contentBlocks.push('```' + snapshot.language);
 			contentBlocks.push(snapshot.contextAfter);
 			contentBlocks.push('```');
@@ -239,7 +239,7 @@ export class BeamComposerService extends vscode.Disposable {
 			const line = diagnostic.range.start.line + 1;
 			const column = diagnostic.range.start.character + 1;
 			const source = diagnostic.source ? ` (${diagnostic.source})` : '';
-			return `${index + 1}. [${formatSeverity(diagnostic.severity)}] \u7b2c ${line} \u884c\uff0c\u7b2c ${column} \u5217${source}\uff1a${diagnostic.message}`;
+			return `${index + 1}. [${formatSeverity(diagnostic.severity)}] line ${line}, column ${column}${source}: ${diagnostic.message}`;
 		});
 
 		return this.upsertAttachment({
@@ -249,7 +249,7 @@ export class BeamComposerService extends vscode.Disposable {
 			detail: vscode.l10n.t('\u95ee\u9898 \u00b7 {0}', diagnostics.length),
 			preview: truncateText(lines.join('\n'), MAX_PROBLEM_PREVIEW),
 			content: [
-				`\u5df2\u9644\u52a0\u8bca\u65ad\u4fe1\u606f\uff1a${getEditorLabel(editor.document.uri)}`,
+				`Attached diagnostics: ${getEditorLabel(editor.document.uri)}`,
 				'',
 				...lines
 			].join('\n')
@@ -331,7 +331,7 @@ export class BeamComposerService extends vscode.Disposable {
 
 		return {
 			context: blocks.length ? [
-				'\u5df2\u9644\u52a0\u5230\u5bf9\u8bdd\u7684\u4e0a\u4e0b\u6587\uff1a',
+				'Attached context for this conversation:',
 				...blocks
 			].join('\n\n') : undefined,
 			images,
@@ -429,10 +429,10 @@ export class BeamComposerService extends vscode.Disposable {
 			detail: vscode.l10n.t('图片 · {0} · {1}', getAttachmentTypeLabel(fileName), sizeLabel),
 			preview: vscode.l10n.t('图片已附加，发送后 Beam 可直接查看这张图片。'),
 			content: [
-				`已附加图片：${fileName}`,
-				`类型：${mediaType}`,
-				`大小：${sizeLabel}`,
-				'请结合图片内容回答用户问题。'
+				`Attached image: ${fileName}`,
+				`Type: ${mediaType}`,
+				`Size: ${sizeLabel}`,
+				'Please use the image content when answering the user.'
 			].join('\n'),
 			originalUri: uri.toString(),
 			binary: {
@@ -453,9 +453,9 @@ export class BeamComposerService extends vscode.Disposable {
 			detail: vscode.l10n.t('PDF · {0}', sizeLabel),
 			preview: vscode.l10n.t('PDF 已附加，发送后 Beam 可直接阅读文档内容。'),
 			content: [
-				`已附加 PDF：${fileName}`,
-				`大小：${sizeLabel}`,
-				'请结合文档内容回答用户问题。'
+				`Attached PDF: ${fileName}`,
+				`Size: ${sizeLabel}`,
+				'Please use the document content when answering the user.'
 			].join('\n'),
 			originalUri: uri.toString(),
 			binary: {
@@ -476,7 +476,7 @@ export class BeamComposerService extends vscode.Disposable {
 			detail: vscode.l10n.t('上传文件 · {0} · {1}', getAttachmentTypeLabel(fileName), formatByteSize(fileData.byteLength)),
 			preview: truncateText(content.trim(), MAX_FILE_PREVIEW) || vscode.l10n.t('空文件'),
 			content: [
-				`已附加上传文件：${fileName}`,
+				`Attached uploaded file: ${fileName}`,
 				'',
 				'```',
 				content,
@@ -549,20 +549,20 @@ function truncateText(value: string, maxLength: number): string {
 		return value;
 	}
 
-	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[\u5df2\u622a\u65ad]`;
+	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[truncated]`;
 }
 
 function formatSeverity(severity: vscode.DiagnosticSeverity): string {
 	switch (severity) {
 		case vscode.DiagnosticSeverity.Error:
-			return '\u9519\u8bef';
+			return 'Error';
 		case vscode.DiagnosticSeverity.Warning:
-			return '\u8b66\u544a';
+			return 'Warning';
 		case vscode.DiagnosticSeverity.Information:
-			return '\u4fe1\u606f';
+			return 'Information';
 		case vscode.DiagnosticSeverity.Hint:
-			return '\u63d0\u793a';
+			return 'Hint';
 		default:
-			return '\u672a\u77e5';
+			return 'Unknown';
 	}
 }

@@ -23,6 +23,7 @@ const MAX_SESSIONS = 20;
 const MAX_HISTORY_CHAR_BUDGET = 12000;
 const MAX_MESSAGE_CHAR_BUDGET = 3200;
 const MAX_REQUEST_CONTEXT_CHARS = 4200;
+const MAX_CONTINUATION_MEMORY_CHARS = 4200;
 const MAX_SESSION_TITLE_LENGTH = 28;
 const MAX_SESSION_PREVIEW_LENGTH = 90;
 const DEFAULT_BEAM_BASE_URL = 'https://code.api.audiozen.cn/v1';
@@ -40,6 +41,7 @@ const DEFAULT_SESSION_TITLE = '\u65b0\u5bf9\u8bdd';
 export interface IBeamChatMessage {
 	readonly role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking';
 	readonly content: string;
+	readonly modelContent?: string;
 	readonly metadata?: {
 		readonly toolName?: string;
 		readonly title?: string;
@@ -84,6 +86,7 @@ export interface IBeamTextRequestOptions {
 interface IBuildUserTurnContentOptions {
 	readonly attachments?: IBeamComposerResolvedAttachments;
 	readonly includeStoredContext?: boolean;
+	readonly continuationMemory?: string;
 }
 
 interface IAnthropicBase64Source {
@@ -490,7 +493,7 @@ export class BeamService extends vscode.Disposable {
 		this.lastRequestContext = trimRequestContext(requestContext?.trim());
 		this.pendingToolNames = [];
 		this.workingLabel = vscode.l10n.t('正在分析需求并规划下一步...');
-		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002') }];
+		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002'), modelContent: trimmed || 'Please continue using the attached context.' }];
 		this.updateActiveSessionTitleFromPrompt(trimmed);
 		this.busy = true;
 		this.activeRequestCancellation.dispose();
@@ -500,7 +503,7 @@ export class BeamService extends vscode.Disposable {
 
 		try {
 			const content = await this.requestAssistantResponse(configuration, undefined, this.activeRequestCancellation.token, attachments);
-			this.messages = [...this.messages, { role: 'assistant', content }];
+			this.messages = [...this.messages, { role: 'assistant', content, modelContent: content }];
 			this.persistState();
 		} catch (error) {
 			const rawMessage = error instanceof Error ? error.message : vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\u3002');
@@ -510,7 +513,7 @@ export class BeamService extends vscode.Disposable {
 				return;
 			}
 			this.log(vscode.l10n.t('Beam 请求失败：{0}', rawMessage));
-			this.messages = [...this.messages, { role: 'assistant', content: message }];
+			this.messages = [...this.messages, { role: 'assistant', content: message, modelContent: message }];
 			this.persistState();
 		} finally {
 			this.busy = false;
@@ -1295,6 +1298,7 @@ export class BeamService extends vscode.Disposable {
 		this.messages = [...this.messages, {
 			role: 'thinking',
 			content: assistantText,
+			modelContent: assistantText,
 			metadata: {
 				title: createThinkingTitle(assistantText, round),
 				round: round + 1
@@ -1326,10 +1330,12 @@ export class BeamService extends vscode.Disposable {
 			this._onDidChangeState.fire(this.getState());
 			const result = await this.toolService.invoke(toolUse.name, toolUse.input, token);
 			this.throwIfCancelled(token);
-			const content = result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
+			const modelContent = result.content || 'Tool returned no output.';
+			const displayContent = result.displayContent || result.content || vscode.l10n.t('\u5de5\u5177\u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u8f93\u51fa\u3002');
 			this.messages = [...this.messages, {
 				role: 'tool',
-				content,
+				content: displayContent,
+				modelContent,
 				metadata: {
 					toolName: result.toolName,
 					title: toolDisplayName,
@@ -1339,7 +1345,7 @@ export class BeamService extends vscode.Disposable {
 			this.pendingToolNames = pendingToolNames.slice(index + 1);
 			toolResultBlocks.push({
 				id: toolUse.id,
-				content
+				content: modelContent
 			});
 			this.persistState();
 			this._onDidChangeState.fire(this.getState());
@@ -1472,12 +1478,13 @@ export class BeamService extends vscode.Disposable {
 			.filter(message => message.role !== 'system' && message.role !== 'tool' && message.role !== 'thinking')
 			.slice(-REQUEST_HISTORY_LIMIT);
 		const lastUserIndex = findLastIndex(filteredMessages, message => message.role === 'user');
+		const continuationMemory = this.buildContinuationMemory();
 		const turns = filteredMessages
 			.map<IRequestTurn>((message, index) => {
 				if (message.role === 'assistant') {
 					return {
 						role: 'assistant',
-						content: [{ type: 'text', text: trimMessageContent(message.content) }]
+						content: [{ type: 'text', text: trimMessageContent(message.modelContent || message.content) }]
 					};
 				}
 
@@ -1485,7 +1492,8 @@ export class BeamService extends vscode.Disposable {
 					role: 'user',
 					content: this.buildUserTurnContent(message.content, {
 						attachments: index === lastUserIndex ? attachments : undefined,
-						includeStoredContext: index === lastUserIndex
+						includeStoredContext: index === lastUserIndex,
+						continuationMemory: index === lastUserIndex ? continuationMemory : undefined
 					})
 				};
 			});
@@ -1496,9 +1504,12 @@ export class BeamService extends vscode.Disposable {
 	private buildUserTurnContent(prompt: string, options?: IBuildUserTurnContentOptions): IBeamTurnContentBlock[] {
 		const blocks: IBeamTurnContentBlock[] = [];
 		const textParts = [trimMessageContent(prompt)];
+		if (options?.continuationMemory) {
+			textParts.push(`Continuation memory:\n${options.continuationMemory}`);
+		}
 		const context = options?.attachments?.context ?? (options?.includeStoredContext ? this.lastRequestContext : undefined);
 		if (context) {
-			textParts.push(`\u9644\u52a0\u4e0a\u4e0b\u6587\uff1a\n${context}`);
+			textParts.push(`Additional context:\n${context}`);
 		}
 
 		const text = textParts.filter(Boolean).join('\n\n').trim();
@@ -1526,7 +1537,24 @@ export class BeamService extends vscode.Disposable {
 			});
 		}
 
-		return blocks.length ? blocks : [{ type: 'text', text: vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002') }];
+		return blocks.length ? blocks : [{ type: 'text', text: 'Please continue using the attached context.' }];
+	}
+
+	private buildContinuationMemory(): string | undefined {
+		const lastUserIndex = findLastIndex(this.messages, message => message.role === 'user');
+		if (lastUserIndex <= 0) {
+			return undefined;
+		}
+
+		const lines = this.messages
+			.slice(Math.max(0, lastUserIndex - 36), lastUserIndex)
+			.map(message => toContinuationMemoryLine(message))
+			.filter((value): value is string => Boolean(value));
+		if (!lines.length) {
+			return undefined;
+		}
+
+		return trimContinuationMemory(['Session memory from earlier turns:', ...lines].join('\n'));
 	}
 
 	private getActiveSession(): IBeamChatSessionRecord | undefined {
@@ -1754,7 +1782,8 @@ function isBeamChatMessage(value: IBeamChatMessage | undefined): value is IBeamC
 	return Boolean(
 		value &&
 		(value.role === 'user' || value.role === 'assistant' || value.role === 'system' || value.role === 'tool' || value.role === 'thinking') &&
-		typeof value.content === 'string'
+		typeof value.content === 'string' &&
+		(typeof value.modelContent === 'undefined' || typeof value.modelContent === 'string')
 	);
 }
 
@@ -1841,6 +1870,10 @@ function trimMessageContent(value: string): string {
 	return truncateTextValue(value.trim(), MAX_MESSAGE_CHAR_BUDGET);
 }
 
+function trimContinuationMemory(value: string): string {
+	return truncateTextValue(value.trim(), MAX_CONTINUATION_MEMORY_CHARS);
+}
+
 function trimRequestContext(value: string | undefined): string | undefined {
 	if (!value) {
 		return undefined;
@@ -1879,6 +1912,55 @@ function truncateTextValue(value: string, maxLength: number): string {
 	}
 
 	return `${value.slice(0, Math.max(0, maxLength - 8))} ...`;
+}
+
+function toContinuationMemoryLine(message: IBeamChatMessage): string | undefined {
+	const content = compactContinuationContent(message);
+	if (!content) {
+		return undefined;
+	}
+
+	switch (message.role) {
+		case 'user':
+			return `User request: ${content}`;
+		case 'assistant':
+			return `Assistant reply: ${content}`;
+		case 'thinking':
+			return `Working analysis: ${content}`;
+		case 'tool':
+			return `Tool ${message.metadata?.toolName || 'unknown_tool'}: ${content}`;
+		default:
+			return undefined;
+	}
+}
+
+function compactContinuationContent(message: IBeamChatMessage): string {
+	const base = (message.modelContent || message.content || '').trim();
+	if (!base) {
+		return '';
+	}
+
+	if (message.role === 'tool') {
+		const lines = base
+			.split('\n')
+			.map(line => line.trim())
+			.filter(Boolean)
+			.filter(line =>
+				line.startsWith('Summary:')
+				|| line.startsWith('-- ')
+				|| line.startsWith('Changed file:')
+				|| line.startsWith('Location:')
+				|| line.startsWith('Stats:')
+				|| line.startsWith('Status:')
+				|| line.startsWith('Command:')
+				|| line.startsWith('Cwd:')
+				|| line.startsWith('Exit code:')
+			)
+			.slice(0, 8);
+		return truncateTextValue((lines.length ? lines : [base]).join(' | '), 700);
+	}
+
+	return truncateTextValue(base.replace(/\s+/g, ' ').trim(), message.role === 'thinking' ? 420 : 520);
 }
 
 function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean): number {

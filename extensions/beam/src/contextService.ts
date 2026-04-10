@@ -118,29 +118,29 @@ export class BeamContextService implements vscode.Disposable {
 		};
 	}
 
-	async buildPromptContext(): Promise<string> {
+	async buildPromptContext(mode: 'model' | 'display' = 'model'): Promise<string> {
 		const sections: string[] = [];
-		const activeEditorSection = this.buildActiveEditorSection();
+		const activeEditorSection = this.buildActiveEditorSection(mode);
 		if (activeEditorSection) {
 			sections.push(activeEditorSection);
 		}
 
-		const workspaceTreeSection = await this.buildWorkspaceTreeSection();
+		const workspaceTreeSection = await this.buildWorkspaceTreeSection(mode);
 		if (workspaceTreeSection) {
 			sections.push(workspaceTreeSection);
 		}
 
-		const recentFilesSection = this.buildRecentFilesSection();
+		const recentFilesSection = this.buildRecentFilesSection(mode);
 		if (recentFilesSection) {
 			sections.push(recentFilesSection);
 		}
 
-		const diagnosticsSection = this.buildDiagnosticsSection();
+		const diagnosticsSection = this.buildDiagnosticsSection(mode);
 		if (diagnosticsSection) {
 			sections.push(diagnosticsSection);
 		}
 
-		const terminalSection = this.buildTerminalFailuresSection();
+		const terminalSection = this.buildTerminalFailuresSection(mode);
 		if (terminalSection) {
 			sections.push(terminalSection);
 		}
@@ -214,21 +214,23 @@ export class BeamContextService implements vscode.Disposable {
 		this.fireState();
 	}
 
-	private buildActiveEditorSection(): string | undefined {
+	private buildActiveEditorSection(mode: 'model' | 'display'): string | undefined {
 		const editor = getPreferredCodeEditor();
 		if (!editor) {
 			return undefined;
 		}
 
 		const lines: string[] = [
-			'\u5f53\u524d\u7f16\u8f91\u5668\uff1a',
-			`- \u6587\u4ef6\uff1a${this.formatUri(editor.document.uri)}`,
-			`- \u8bed\u8a00\uff1a${editor.document.languageId || 'plaintext'}`
+			mode === 'model' ? 'Current editor:' : '\u5f53\u524d\u7f16\u8f91\u5668\uff1a',
+			mode === 'model' ? `- File: ${this.formatUri(editor.document.uri)}` : `- \u6587\u4ef6\uff1a${this.formatUri(editor.document.uri)}`,
+			mode === 'model' ? `- Language: ${editor.document.languageId || 'plaintext'}` : `- \u8bed\u8a00\uff1a${editor.document.languageId || 'plaintext'}`
 		];
 
 		if (!editor.selection.isEmpty) {
 			const selectedText = truncateText(editor.document.getText(editor.selection), MAX_SELECTION_CONTEXT);
-			lines.push(`- \u9009\u533a\uff1a\u7b2c ${editor.selection.start.line + 1}-${editor.selection.end.line + 1} \u884c`);
+			lines.push(mode === 'model'
+				? `- Selection: lines ${editor.selection.start.line + 1}-${editor.selection.end.line + 1}`
+				: `- \u9009\u533a\uff1a\u7b2c ${editor.selection.start.line + 1}-${editor.selection.end.line + 1} \u884c`);
 			lines.push('```');
 			lines.push(selectedText);
 			lines.push('```');
@@ -237,13 +239,13 @@ export class BeamContextService implements vscode.Disposable {
 		return lines.join('\n');
 	}
 
-	private async buildWorkspaceTreeSection(): Promise<string | undefined> {
+	private async buildWorkspaceTreeSection(mode: 'model' | 'display'): Promise<string | undefined> {
 		const workspaceFolders = vscode.workspace.workspaceFolders;
 		if (!workspaceFolders?.length) {
 			return undefined;
 		}
 
-		const lines = ['\u5de5\u4f5c\u533a\u7ed3\u6784\uff1a'];
+		const lines = [mode === 'model' ? 'Workspace structure:' : '\u5de5\u4f5c\u533a\u7ed3\u6784\uff1a'];
 		const budget = { lines: 0 };
 
 		for (const folder of workspaceFolders.slice(0, 2)) {
@@ -297,27 +299,29 @@ export class BeamContextService implements vscode.Disposable {
 		}
 	}
 
-	private buildRecentFilesSection(): string | undefined {
+	private buildRecentFilesSection(mode: 'model' | 'display'): string | undefined {
 		if (!this.recentFiles.length) {
 			return undefined;
 		}
 
 		return [
-			'\u6700\u8fd1\u6587\u4ef6\uff1a',
+			mode === 'model' ? 'Recent files:' : '\u6700\u8fd1\u6587\u4ef6\uff1a',
 			...this.recentFiles.map((file, index) => `${index + 1}. ${file}`)
 		].join('\n');
 	}
 
-	private buildDiagnosticsSection(): string | undefined {
+	private buildDiagnosticsSection(mode: 'model' | 'display'): string | undefined {
 		const diagnostics = vscode.languages.getDiagnostics();
 		if (!diagnostics.length) {
 			return undefined;
 		}
 
 		const activeUri = getPreferredCodeEditor()?.document.uri;
-		const lines = ['\u8bca\u65ad\u6458\u8981\uff1a'];
+		const lines = [mode === 'model' ? 'Diagnostics summary:' : '\u8bca\u65ad\u6458\u8981\uff1a'];
 		const totals = this.getDiagnosticTotals();
-		lines.push(`- \u5de5\u4f5c\u533a\u603b\u8ba1\uff1a${totals.errors} \u4e2a\u9519\u8bef\uff0c${totals.warnings} \u4e2a\u8b66\u544a`);
+		lines.push(mode === 'model'
+			? `- Workspace totals: ${totals.errors} errors, ${totals.warnings} warnings`
+			: `- \u5de5\u4f5c\u533a\u603b\u8ba1\uff1a${totals.errors} \u4e2a\u9519\u8bef\uff0c${totals.warnings} \u4e2a\u8b66\u544a`);
 
 		const flattened = diagnostics
 			.flatMap(([uri, values]) => values.map(diagnostic => ({ uri, diagnostic })))
@@ -334,21 +338,25 @@ export class BeamContextService implements vscode.Disposable {
 
 		for (const { uri, diagnostic } of flattened) {
 			const source = diagnostic.source ? ` (${diagnostic.source})` : '';
-			lines.push(`- ${this.formatUri(uri)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} [${formatSeverity(diagnostic.severity)}]${source} ${diagnostic.message}`);
+			lines.push(`- ${this.formatUri(uri)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} [${mode === 'model' ? formatSeverity(diagnostic.severity) : formatSeverityDisplay(diagnostic.severity)}]${source} ${diagnostic.message}`);
 		}
 
 		return lines.join('\n');
 	}
 
-	private buildTerminalFailuresSection(): string | undefined {
+	private buildTerminalFailuresSection(mode: 'model' | 'display'): string | undefined {
 		if (!this.failedTerminalCommands.length) {
 			return undefined;
 		}
 
-		const lines = ['\u6700\u8fd1\u5931\u8d25\u7684\u7ec8\u7aef\u547d\u4ee4\uff1a'];
+		const lines = [mode === 'model' ? 'Recent failed terminal commands:' : '\u6700\u8fd1\u5931\u8d25\u7684\u7ec8\u7aef\u547d\u4ee4\uff1a'];
 		for (const failure of this.failedTerminalCommands) {
-			const cwd = failure.cwd ? `\uff0c\u76ee\u5f55 ${failure.cwd}` : '';
-			const exitCode = failure.exitCode === undefined ? '\u9000\u51fa\u7801\u672a\u77e5' : `\u9000\u51fa\u7801 ${failure.exitCode}`;
+			const cwd = failure.cwd
+				? (mode === 'model' ? `, cwd ${failure.cwd}` : `\uff0c\u76ee\u5f55 ${failure.cwd}`)
+				: '';
+			const exitCode = failure.exitCode === undefined
+				? (mode === 'model' ? 'exit code unknown' : '\u9000\u51fa\u7801\u672a\u77e5')
+				: (mode === 'model' ? `exit code ${failure.exitCode}` : `\u9000\u51fa\u7801 ${failure.exitCode}`);
 			lines.push(`- ${failure.commandLine} (${exitCode})${cwd}`);
 			if (failure.output) {
 				lines.push('```');
@@ -435,10 +443,25 @@ function truncateText(value: string, maxLength: number): string {
 		return value;
 	}
 
-	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[\u5df2\u622a\u65ad]`;
+	return `${value.slice(0, Math.max(0, maxLength - 12))}\n...[truncated]`;
 }
 
 function formatSeverity(severity: vscode.DiagnosticSeverity): string {
+	switch (severity) {
+		case vscode.DiagnosticSeverity.Error:
+			return 'Error';
+		case vscode.DiagnosticSeverity.Warning:
+			return 'Warning';
+		case vscode.DiagnosticSeverity.Information:
+			return 'Information';
+		case vscode.DiagnosticSeverity.Hint:
+			return 'Hint';
+		default:
+			return 'Unknown';
+	}
+}
+
+function formatSeverityDisplay(severity: vscode.DiagnosticSeverity): string {
 	switch (severity) {
 		case vscode.DiagnosticSeverity.Error:
 			return '\u9519\u8bef';

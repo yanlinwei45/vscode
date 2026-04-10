@@ -1512,7 +1512,9 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 		function parseChangeSummary(text) {
 			const source = String(text || '');
-			if (!source.includes('变更文件：') || !source.includes('状态：已修改编辑器内容')) {
+			const hasChineseFormat = source.includes('变更文件：') && source.includes('状态：已修改编辑器内容');
+			const hasEnglishFormat = source.includes('Changed file:') && source.includes('Status: Editor content has been modified');
+			if (!hasChineseFormat && !hasEnglishFormat) {
 				return undefined;
 			}
 
@@ -1523,16 +1525,32 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					result.file = line.slice('变更文件：'.length).trim();
 					continue;
 				}
+				if (line.startsWith('Changed file:')) {
+					result.file = line.slice('Changed file:'.length).trim();
+					continue;
+				}
 				if (line.startsWith('位置：')) {
 					result.position = line.slice('位置：'.length).trim();
+					continue;
+				}
+				if (line.startsWith('Location:')) {
+					result.position = line.slice('Location:'.length).trim();
 					continue;
 				}
 				if (line.startsWith('统计：')) {
 					result.stats = line.slice('统计：'.length).trim();
 					continue;
 				}
+				if (line.startsWith('Stats:')) {
+					result.stats = line.slice('Stats:'.length).trim();
+					continue;
+				}
 				if (line.startsWith('状态：')) {
 					result.status = line.slice('状态：'.length).trim();
+					continue;
+				}
+				if (line.startsWith('Status:')) {
+					result.status = line.slice('Status:'.length).trim();
 					continue;
 				}
 				if (!result.intro) {
@@ -1585,7 +1603,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			switch (toolName) {
 				case 'list_directory': {
 					const items = lines
-						.map(line => line.replace(/^(目录|文件)\s+/, '').trim())
+						.map(line => line.replace(/^(目录|文件|Directory|File)\s+/, '').trim())
 						.filter(Boolean)
 						.map(item => '-- ' + item);
 					return {
@@ -1630,18 +1648,18 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 						details
 					};
 				case 'run_command': {
-					const commandLine = lines.find(line => line.startsWith('命令：'));
+					const commandLine = lines.find(line => line.startsWith('命令：') || line.startsWith('Command:'));
 					return {
 						summary: '已执行只读命令',
-						items: commandLine ? ['-- ' + commandLine.slice('命令：'.length).trim()] : [],
+						items: commandLine ? ['-- ' + commandLine.replace(/^命令：|^Command:/, '').trim()] : [],
 						details
 					};
 				}
 				case 'open_file': {
-					const targetLine = lines.find(line => line.startsWith('已打开 '));
+					const targetLine = lines.find(line => line.startsWith('已打开 ') || line.startsWith('Opened '));
 					return {
 						summary: '已打开文件',
-						items: targetLine ? ['-- ' + targetLine.replace(/^已打开\s+/, '').replace(/，定位到.*$/, '')] : [],
+						items: targetLine ? ['-- ' + targetLine.replace(/^已打开\s+|^Opened\s+/, '').replace(/，定位到.*$|, positioned at.*$/, '')] : [],
 						details
 					};
 				}
@@ -1674,15 +1692,15 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				return undefined;
 			}
 
-			const summaryLine = lines.find(line => line.startsWith('摘要：'));
+			const summaryLine = lines.find(line => line.startsWith('摘要：') || line.startsWith('Summary:'));
 			const bullets = lines.filter(line => line.startsWith('-- '));
 			if (!summaryLine && !bullets.length) {
 				return buildLegacyToolMessageSummary(message, lines);
 			}
 
-			const details = lines.filter(line => !line.startsWith('摘要：') && !line.startsWith('-- '));
+			const details = lines.filter(line => !line.startsWith('摘要：') && !line.startsWith('Summary:') && !line.startsWith('-- '));
 			return {
-				summary: summaryLine ? summaryLine.slice('摘要：'.length).trim() : (message.metadata?.title || ''),
+				summary: summaryLine ? summaryLine.replace(/^摘要：|^Summary:/, '').trim() : (message.metadata?.title || ''),
 				items: bullets,
 				details
 			};
