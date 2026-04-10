@@ -1578,6 +1578,91 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			container.appendChild(card);
 		}
 
+		function buildLegacyToolMessageSummary(message, lines) {
+			const toolName = message.metadata?.toolName;
+			const details = lines.slice();
+
+			switch (toolName) {
+				case 'list_directory': {
+					const items = lines
+						.map(line => line.replace(/^(目录|文件)\s+/, '').trim())
+						.filter(Boolean)
+						.map(item => '-- ' + item);
+					return {
+						summary: items.length ? '已列出 ' + items.length + ' 项' : (message.metadata?.title || ${JSON.stringify(toolLabelFallback)}),
+						items,
+						details
+					};
+				}
+				case 'read_file':
+					return {
+						summary: '已读取 1 个文件',
+						items: [],
+						details
+					};
+				case 'search_workspace': {
+					const files = toUniqueList(lines
+						.map(line => {
+							const match = line.match(/^(.+?):\d+:\d+\s+/);
+							return match ? match[1].trim() : '';
+						})
+						.filter(Boolean));
+					return {
+						summary: files.length ? '已搜索到 ' + files.length + ' 个文件中的匹配' : '已搜索工作区',
+						items: files.map(file => '-- ' + file),
+						details
+					};
+				}
+				case 'get_diagnostics':
+					return {
+						summary: '已获取诊断信息',
+						items: ['-- 当前文件'],
+						details
+					};
+				case 'write_file':
+				case 'create_file':
+				case 'delete_file':
+				case 'replace_in_file':
+				case 'create_edit_proposal':
+					return {
+						summary: '已生成待确认修改',
+						items: ['-- 编辑器中的待确认改动'],
+						details
+					};
+				case 'run_command': {
+					const commandLine = lines.find(line => line.startsWith('命令：'));
+					return {
+						summary: '已执行只读命令',
+						items: commandLine ? ['-- ' + commandLine.slice('命令：'.length).trim()] : [],
+						details
+					};
+				}
+				case 'open_file': {
+					const targetLine = lines.find(line => line.startsWith('已打开 '));
+					return {
+						summary: '已打开文件',
+						items: targetLine ? ['-- ' + targetLine.replace(/^已打开\s+/, '').replace(/，定位到.*$/, '')] : [],
+						details
+					};
+				}
+				case 'select_editor_range':
+				case 'select_current_function':
+				case 'select_current_block':
+				case 'reveal_range':
+					return {
+						summary: message.metadata?.title || '已更新编辑器定位',
+						items: [],
+						details
+					};
+				default:
+					return {
+						summary: message.metadata?.title || (message.metadata?.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)}),
+						items: [],
+						details
+					};
+			}
+		}
+
 		function parseToolMessageSummary(message) {
 			if (!message || message.role !== 'tool') {
 				return undefined;
@@ -1592,7 +1677,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			const summaryLine = lines.find(line => line.startsWith('摘要：'));
 			const bullets = lines.filter(line => line.startsWith('-- '));
 			if (!summaryLine && !bullets.length) {
-				return undefined;
+				return buildLegacyToolMessageSummary(message, lines);
 			}
 
 			const details = lines.filter(line => !line.startsWith('摘要：') && !line.startsWith('-- '));
@@ -1622,8 +1707,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 		function createWorkflowPreviewSections(messages) {
 			const readFiles = [];
+			let readFileCount = 0;
 			const diagnostics = [];
+			let diagnosticCount = 0;
 			const replacements = [];
+			let replacementCount = 0;
 			const sections = [];
 
 			for (const message of messages) {
@@ -1637,9 +1725,11 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 				switch (toolName) {
 					case 'read_file':
+						readFileCount += Math.max(1, items.length);
 						readFiles.push(...items);
 						break;
 					case 'get_diagnostics':
+						diagnosticCount += Math.max(1, items.length);
 						diagnostics.push(...items);
 						break;
 					case 'replace_in_file':
@@ -1647,6 +1737,10 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					case 'create_file':
 					case 'delete_file':
 					case 'create_edit_proposal':
+						replacementCount += 1;
+						if (!items.length && parsed?.summary) {
+							replacements.push(parsed.summary);
+						}
 						replacements.push(...items);
 						break;
 					default:
@@ -1662,23 +1756,25 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			const previewSections = [];
 			const readItems = toUniqueList(readFiles);
-			if (readItems.length) {
+			const readCount = Math.max(readFileCount, readItems.length);
+			if (readCount) {
 				previewSections.push({
-					title: '读取了 ' + readItems.length + ' 个文件',
+					title: '读取了 ' + readCount + ' 个文件',
 					items: readItems.map(item => '-- ' + item)
 				});
 			}
 
 			const diagnosticItems = toUniqueList(diagnostics);
-			if (diagnosticItems.length) {
+			const diagnosticTotal = Math.max(diagnosticCount, diagnosticItems.length);
+			if (diagnosticTotal) {
 				previewSections.push({
-					title: '获取了 ' + diagnosticItems.length + ' 个文件的诊断信息',
+					title: '获取了 ' + diagnosticTotal + ' 个文件的诊断信息',
 					items: diagnosticItems.map(item => '-- ' + item)
 				});
 			}
 
 			const replacementItems = toUniqueList(replacements);
-			if (replacementItems.length) {
+			if (replacementCount || replacementItems.length) {
 				previewSections.push({
 					title: '替换工作区',
 					items: replacementItems.map((item, index) => (index + 1) + '. ' + item)

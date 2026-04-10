@@ -234,9 +234,10 @@ export class BeamToolService {
 		];
 	}
 
-	async invoke(toolName: string, input: unknown): Promise<IBeamToolCallResult> {
+	async invoke(toolName: string, input: unknown, token?: vscode.CancellationToken): Promise<IBeamToolCallResult> {
 		this.log(vscode.l10n.t('\u6b63\u5728\u8c03\u7528\u5de5\u5177 {0}\u3002', toolName));
 		try {
+			this.throwIfCancelled(token);
 			switch (toolName) {
 				case 'get_active_editor_context':
 					return { toolName, content: await this.contextService.buildPromptContext() };
@@ -245,7 +246,7 @@ export class BeamToolService {
 				case 'list_directory':
 					return { toolName, content: await this.listDirectory(asOptionalString(asRecord(input).path) || '.') };
 				case 'search_workspace':
-					return { toolName, content: await this.searchWorkspace(asRecord(input).query) };
+					return { toolName, content: await this.searchWorkspace(asRecord(input).query, token) };
 				case 'get_diagnostics':
 					return { toolName, content: await this.getDiagnostics(asOptionalString(asRecord(input).path)) };
 				case 'open_file':
@@ -269,7 +270,7 @@ export class BeamToolService {
 				case 'replace_in_file':
 					return { toolName, content: await this.replaceInFile(asRecord(input)) };
 				case 'run_command':
-					return { toolName, content: await this.runCommand(asRecord(input)) };
+					return { toolName, content: await this.runCommand(asRecord(input), token) };
 				default:
 					throw new Error(vscode.l10n.t('\u672a\u77e5\u5de5\u5177\uff1a{0}', toolName));
 			}
@@ -303,12 +304,13 @@ export class BeamToolService {
 			.join('\n');
 	}
 
-	private async searchWorkspace(queryInput: unknown): Promise<string> {
+	private async searchWorkspace(queryInput: unknown, token?: vscode.CancellationToken): Promise<string> {
 		const query = asString(queryInput, 'query');
 		const workspaceFiles = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,out,dist,build}/**', MAX_SEARCH_FILE_SCAN);
 		const results: IWorkspaceSearchMatch[] = [];
 
 		for (const file of workspaceFiles) {
+			this.throwIfCancelled(token);
 			if (results.length >= MAX_SEARCH_RESULTS) {
 				break;
 			}
@@ -483,7 +485,7 @@ export class BeamToolService {
 		return this.formatProposalCreatedMessage(summary, vscode.l10n.t('已在 {1} 中先应用 {0} 处替换，等待用户确认。', count, getEditorLabel(uri)));
 	}
 
-	private async runCommand(input: Record<string, unknown>): Promise<string> {
+	private async runCommand(input: Record<string, unknown>, token?: vscode.CancellationToken): Promise<string> {
 		const commandLine = asString(input.command, 'command').trim();
 		if (!isSafeCommand(commandLine)) {
 			throw new Error(vscode.l10n.t('\u547d\u4ee4\u5305\u542b\u4e0d\u652f\u6301\u7684 shell \u63a7\u5236\u5b57\u7b26\u3002\u53ea\u80fd\u8fd0\u884c\u5355\u6761\u53ea\u8bfb\u547d\u4ee4\u3002'));
@@ -496,6 +498,7 @@ export class BeamToolService {
 		const cwdUri = this.resolveWorkspaceFolderCwd(asOptionalString(input.cwd));
 		const terminal = await this.getOrCreateTerminal(cwdUri);
 		terminal.show(false);
+		this.throwIfCancelled(token);
 
 		const shellIntegration = await this.waitForShellIntegration(terminal);
 		if (!shellIntegration) {
@@ -516,9 +519,10 @@ export class BeamToolService {
 			}
 		})();
 
-		const exitCode = await new Promise<number | undefined>(resolve => {
+		const exitCode = await new Promise<number | undefined>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				disposable.dispose();
+				cancellationDisposable?.dispose();
 				resolve(undefined);
 			}, COMMAND_TIMEOUT_MS);
 
@@ -529,15 +533,35 @@ export class BeamToolService {
 
 				clearTimeout(timer);
 				disposable.dispose();
+				cancellationDisposable?.dispose();
 				resolve(event.exitCode);
 			});
+
+			const cancellationDisposable = token?.onCancellationRequested(() => {
+				clearTimeout(timer);
+				disposable.dispose();
+				cancellationDisposable?.dispose();
+				try {
+					terminal.sendText('\u0003', false);
+				} catch {
+					// Best-effort interrupt.
+				}
+				reject(new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5df2\u53d6\u6d88\u3002')));
+			});
 		});
-		await readTask;
+		this.throwIfCancelled(token);
+		await raceWithTimeout(readTask, 300);
 
 		const output = truncateText(stripAnsi(chunks.join('')).trim(), MAX_COMMAND_OUTPUT);
 		const header = cwdUri ? `\u76ee\u5f55\uff1a${getEditorLabel(cwdUri)}` : '\u76ee\u5f55\uff1a\u5de5\u4f5c\u533a\u6839\u76ee\u5f55';
 		const codeLabel = exitCode === undefined ? '\u9000\u51fa\u7801\uff1a\u672a\u77e5' : `\u9000\u51fa\u7801\uff1a${exitCode}`;
 		return [header, codeLabel, `\u547d\u4ee4\uff1a${commandLine}`, output].filter(Boolean).join('\n');
+	}
+
+	private throwIfCancelled(token?: vscode.CancellationToken): void {
+		if (token?.isCancellationRequested) {
+			throw new Error(vscode.l10n.t('Beam \u8bf7\u6c42\u5df2\u53d6\u6d88\u3002'));
+		}
 	}
 
 	private createRange(input: Record<string, unknown>): vscode.Range {
@@ -738,4 +762,11 @@ function toErrorMessage(error: unknown): string {
 	}
 
 	return String(error);
+}
+
+async function raceWithTimeout(task: Promise<void>, timeoutMs: number): Promise<void> {
+	await Promise.race([
+		task,
+		new Promise<void>(resolve => setTimeout(resolve, timeoutMs))
+	]);
 }

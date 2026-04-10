@@ -56,6 +56,10 @@
     }
   },
   "contributes": {
+    "configurationDefaults": {
+      "editor.inlineSuggest.enabled": true,
+      "editor.inlineSuggest.experimental.showOnSuggestConflict": "always"
+    },
     "viewsContainers": {
       "secondarySidebar": [
         {

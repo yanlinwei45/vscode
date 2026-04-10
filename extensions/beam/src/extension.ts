@@ -50,6 +50,8 @@ const ADD_SELECTION_TO_CHAT_STATUS_COMMAND =
 	"beam.addSelectionToChatFromStatus";
 const ADD_ATTACHMENT_COMMAND = "beam.addAttachment";
 const CONFIGURE_ACCESS_TOKEN_COMMAND = "beam.configureAccessToken";
+const INLINE_COMPLETION_TRIGGER_COMMAND = "editor.action.inlineSuggest.trigger";
+const INLINE_COMPLETION_AUTO_TRIGGER_DELAY_MS = 80;
 
 export function activate(context: vscode.ExtensionContext): void {
 	const outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
@@ -90,6 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			new BeamInlineCompletionProvider(service),
 		),
 	);
+	context.subscriptions.push(new BeamInlineCompletionAutoTrigger(service));
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_ID, provider, {
 			webviewOptions: { retainContextWhenHidden: true },
@@ -523,6 +526,79 @@ export function activate(context: vscode.ExtensionContext): void {
 			new BeamSelectionCodeLensProvider(proposalService),
 		),
 	);
+}
+
+class BeamInlineCompletionAutoTrigger implements vscode.Disposable {
+	private readonly documentChangeListener: vscode.Disposable;
+	private pendingTrigger: ReturnType<typeof setTimeout> | undefined;
+	private triggerVersion = 0;
+
+	constructor(private readonly service: BeamService) {
+		this.documentChangeListener = vscode.workspace.onDidChangeTextDocument(event => {
+			this.onDidChangeTextDocument(event);
+		});
+	}
+
+	dispose(): void {
+		this.documentChangeListener.dispose();
+		this.clearPendingTrigger();
+	}
+
+	private onDidChangeTextDocument(event: vscode.TextDocumentChangeEvent): void {
+		if (!event.contentChanges.length || event.document.isClosed) {
+			return;
+		}
+
+		if (event.document.uri.scheme !== "file" && event.document.uri.scheme !== "untitled") {
+			return;
+		}
+
+		if (!vscode.workspace.getConfiguration("beam", event.document.uri).get<boolean>("inlineCompletions.enabled", true)) {
+			return;
+		}
+
+		const activeEditor = vscode.window.activeTextEditor;
+		if (!activeEditor || activeEditor.document.uri.toString() !== event.document.uri.toString()) {
+			return;
+		}
+
+		this.scheduleTrigger(event.document.version);
+	}
+
+	private scheduleTrigger(documentVersion: number): void {
+		this.clearPendingTrigger();
+		const version = ++this.triggerVersion;
+		this.pendingTrigger = setTimeout(() => {
+			this.pendingTrigger = undefined;
+			if (version !== this.triggerVersion) {
+				return;
+			}
+
+			const activeEditor = vscode.window.activeTextEditor;
+			if (!activeEditor || activeEditor.document.version !== documentVersion) {
+				return;
+			}
+
+			void vscode.commands.executeCommand(INLINE_COMPLETION_TRIGGER_COMMAND).then(
+				() => {
+					this.service.logInlineCompletion("已主动触发内联建议。");
+				},
+				error => {
+					const message = error instanceof Error ? error.message : String(error);
+					this.service.logInlineCompletion(`主动触发内联建议失败：${message}`);
+				},
+			);
+		}, INLINE_COMPLETION_AUTO_TRIGGER_DELAY_MS);
+	}
+
+	private clearPendingTrigger(): void {
+		if (!this.pendingTrigger) {
+			return;
+		}
+
+		clearTimeout(this.pendingTrigger);
+		this.pendingTrigger = undefined;
+	}
 }
 
 async function revealSidebar(

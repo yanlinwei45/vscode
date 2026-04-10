@@ -346,10 +346,10 @@ export function toOpenAITools(definitions: readonly IBeamToolDefinition[]): read
 	return definitions.map(definition => ({
 		type: 'function',
 		name: definition.name,
-		description: definition.description,
+		description: compactToolText(definition.description),
 		parameters: {
 			type: 'object',
-			properties: definition.input_schema.properties,
+			properties: compactToolProperties(definition.input_schema.properties),
 			required: definition.input_schema.required
 		}
 	}));
@@ -360,21 +360,52 @@ export function toOpenAIChatCompletionTools(definitions: readonly IBeamToolDefin
 		type: 'function',
 		function: {
 			name: definition.name,
-			description: definition.description,
+			description: compactToolText(definition.description),
 			parameters: {
 				type: 'object',
-				properties: definition.input_schema.properties,
+				properties: compactToolProperties(definition.input_schema.properties),
 				required: definition.input_schema.required
 			}
 		}
 	}));
 }
 
-export function buildOpenAIInputItems(turns: readonly IRequestTurn[]): IOpenAIInputItem[] {
+function compactToolProperties(properties: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(properties).map(([key, value]) => {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return [key, value];
+		}
+
+		const record = value as Record<string, unknown>;
+		return [key, {
+			...record,
+			description: compactToolText(typeof record.description === 'string' ? record.description : undefined)
+		}];
+	}));
+}
+
+function compactToolText(value: string | undefined): string {
+	if (!value) {
+		return '';
+	}
+
+	return value.replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+export interface IBuildOpenAIInputItemsOptions {
+	readonly omitAssistantText?: boolean;
+	readonly omitAssistantTextForToolTurns?: boolean;
+}
+
+export function buildOpenAIInputItems(turns: readonly IRequestTurn[], options?: IBuildOpenAIInputItemsOptions): IOpenAIInputItem[] {
 	const items: IOpenAIInputItem[] = [];
+	const omitAssistantText = Boolean(options?.omitAssistantText);
+	const omitAssistantTextForToolTurns = Boolean(options?.omitAssistantTextForToolTurns);
 
 	for (const turn of turns) {
 		let messageContent: (IOpenAIInputTextContent | IOpenAIInputImageContent | IOpenAIInputFileContent)[] = [];
+		const suppressAssistantText = turn.role === 'assistant'
+			&& (omitAssistantText || (omitAssistantTextForToolTurns && turn.content.some(block => block.type === 'tool_use')));
 
 		const flushMessageContent = () => {
 			if (!messageContent.length) {
@@ -392,6 +423,9 @@ export function buildOpenAIInputItems(turns: readonly IRequestTurn[]): IOpenAIIn
 		for (const block of turn.content) {
 			switch (block.type) {
 				case 'text':
+					if (suppressAssistantText) {
+						break;
+					}
 					messageContent.push({
 						type: 'input_text',
 						text: block.text
