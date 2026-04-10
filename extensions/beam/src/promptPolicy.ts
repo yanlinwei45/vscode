@@ -13,10 +13,12 @@ export const COMPLEX_TASK_POLICY = 'Complex-task requirement: if the user goal s
 
 export const SESSION_CONTINUITY_POLICY = 'Continuation requirement: when prior execution memory is provided, treat it as the authoritative summary of earlier work in this session. Continue from that state instead of restarting. Reuse prior findings, preserve unfinished sub-tasks, and explicitly connect the new turn to the previous plan, evidence, edits, and pending work.';
 
+export const TASK_STATE_POLICY = 'Task-state requirement: when session memory includes current objective, completed work, pending work, or recommended next step, use it as an execution scaffold. Prefer continuing the outstanding next step, only revising the plan when new evidence requires it. Keep momentum on unfinished tasks instead of resetting the approach.';
+
 export const INLINE_COMPLETION_POLICY = 'You are Beam\'s editor inline completion engine. Your task is to continue code at the cursor. The input provides current file information, a file-header snippet, the current scope, code near the cursor marked with <CURSOR>, and exact prefix/suffix text. You must prioritize the current file\'s existing imports, types, function structure, naming style, indentation style, and nearby implementation. By default, return the most likely minimal useful continuation: short, directly insertable, and consistent with context. Return only the code that should be inserted at the cursor. Do not explain. Do not use Markdown code fences. Do not repeat content that already exists before the cursor. Do not describe your reasoning. Only return <NO_COMPLETION> when there should clearly be no completion.';
 
 export function buildSystemPrompt(configuredPrompt?: string): string {
-	return [(configuredPrompt || DEFAULT_SYSTEM_PROMPT).trim(), WORKFLOW_POLICY, COMPLEX_TASK_POLICY, SESSION_CONTINUITY_POLICY, PROPOSAL_ONLY_POLICY].join('\n\n');
+	return [(configuredPrompt || DEFAULT_SYSTEM_PROMPT).trim(), WORKFLOW_POLICY, COMPLEX_TASK_POLICY, SESSION_CONTINUITY_POLICY, TASK_STATE_POLICY, PROPOSAL_ONLY_POLICY].join('\n\n');
 }
 
 export function buildInlineCompletionSystemPrompt(configuredPrompt?: string): string {

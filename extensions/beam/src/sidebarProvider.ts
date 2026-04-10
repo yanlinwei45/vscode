@@ -232,10 +232,16 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const toolCountLabel = vscode.l10n.t('\u5171 {0} \u6b65');
 		const runningToolLabel = vscode.l10n.t('\u6b63\u5728\u5904\u7406\uff1a{0}');
 		const workingLabel = vscode.l10n.t('\u6b63\u5728\u5de5\u4f5c');
-		const thinkingSummaryLabel = vscode.l10n.t('\u601d\u8003\u4e0e\u6267\u884c\u8f68\u8ff9');
+		const toolExecutionSummaryLabel = vscode.l10n.t('\u6267\u884c\u8f68\u8ff9');
 		const expandDetailsLabel = vscode.l10n.t('\u5c55\u5f00\u8be6\u60c5');
 		const thinkingStepLabel = vscode.l10n.t('\u5206\u6790');
 		const toolStepLabel = vscode.l10n.t('\u52a8\u4f5c');
+		const taskStateLabel = vscode.l10n.t('\u4efb\u52a1\u72b6\u6001');
+		const taskObjectiveLabel = vscode.l10n.t('\u5f53\u524d\u76ee\u6807');
+		const taskFilesLabel = vscode.l10n.t('\u76f8\u5173\u6587\u4ef6');
+		const taskCompletedLabel = vscode.l10n.t('\u5df2\u5b8c\u6210');
+		const taskPendingLabel = vscode.l10n.t('\u5f85\u5904\u7406');
+		const taskNextStepLabel = vscode.l10n.t('\u4e0b\u4e00\u6b65');
 		const proposalInsertModeLabel = vscode.l10n.t('\u63d2\u5165');
 		const proposalReplaceModeLabel = vscode.l10n.t('\u66ff\u6362');
 		const proposalFileModeLabel = vscode.l10n.t('\u6587\u4ef6');
@@ -729,6 +735,75 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		.workflow-tool-more {
 			font-size: 11px;
 			opacity: 0.66;
+		}
+		.task-state {
+			display: grid;
+			gap: 10px;
+			padding: 12px 13px;
+			border-radius: 14px;
+			border: 1px solid color-mix(in srgb, var(--vscode-button-background) 24%, var(--vscode-panel-border));
+			background:
+				linear-gradient(180deg, color-mix(in srgb, var(--vscode-button-background) 10%, transparent), transparent 54%),
+				color-mix(in srgb, var(--vscode-editor-background) 82%, transparent);
+			box-shadow: 0 8px 18px rgba(0, 0, 0, 0.05);
+		}
+		.task-state-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+			flex-wrap: wrap;
+		}
+		.task-state-title {
+			font-size: 12px;
+			font-weight: 700;
+		}
+		.task-state-badge {
+			padding: 3px 8px;
+			border-radius: 999px;
+			font-size: 11px;
+			font-weight: 700;
+			background: color-mix(in srgb, var(--vscode-button-background) 16%, transparent);
+			color: var(--vscode-foreground);
+		}
+		.task-state-grid {
+			display: grid;
+			gap: 8px;
+		}
+		.task-state-section {
+			display: grid;
+			gap: 5px;
+		}
+		.task-state-section-header {
+			font-size: 11px;
+			font-weight: 700;
+			opacity: 0.68;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+		.task-state-value {
+			font-size: 13px;
+			line-height: 1.5;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+		.task-state-list {
+			display: grid;
+			gap: 5px;
+		}
+		.task-state-item {
+			font-size: 13px;
+			line-height: 1.45;
+			white-space: pre-wrap;
+			word-break: break-word;
+			padding-left: 12px;
+			position: relative;
+		}
+		.task-state-item::before {
+			content: '•';
+			position: absolute;
+			left: 0;
+			opacity: 0.72;
 		}
 		.change-summary {
 			display: grid;
@@ -1869,7 +1944,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		function createToolDisplayItems(messages) {
 			const displayItems = [];
 			for (const message of messages) {
-				if (message.role !== 'tool' && message.role !== 'thinking') {
+				if (message.role !== 'tool') {
 					displayItems.push({ type: 'message', message });
 					continue;
 				}
@@ -1910,7 +1985,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 			const title = document.createElement('div');
 			title.className = 'workflow-title';
-			title.textContent = ${JSON.stringify(thinkingSummaryLabel)};
+			title.textContent = ${JSON.stringify(toolExecutionSummaryLabel)};
 			summaryCopy.appendChild(title);
 
 			const hint = document.createElement('div');
@@ -2145,9 +2220,106 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			focusProposalEl.disabled = !state.proposal.active;
 		}
 
+		function renderTaskState(container) {
+			const taskState = state.chat.sessionTaskState;
+			if (!taskState) {
+				return;
+			}
+
+			const completed = Array.isArray(taskState.completed) ? taskState.completed.filter(Boolean) : [];
+			const relatedFiles = Array.isArray(taskState.relatedFiles) ? taskState.relatedFiles.filter(Boolean) : [];
+			const pending = Array.isArray(taskState.pending) ? taskState.pending.filter(Boolean) : [];
+			const hasContent = Boolean(taskState.objective || taskState.nextStep || relatedFiles.length || completed.length || pending.length);
+			if (!hasContent) {
+				return;
+			}
+
+			const card = document.createElement('div');
+			card.className = 'task-state';
+
+			const header = document.createElement('div');
+			header.className = 'task-state-header';
+
+			const title = document.createElement('div');
+			title.className = 'task-state-title';
+			title.textContent = ${JSON.stringify(taskStateLabel)};
+			header.appendChild(title);
+
+			const badge = document.createElement('div');
+			badge.className = 'task-state-badge';
+			badge.textContent = completed.length
+				? ${JSON.stringify(taskCompletedLabel)} + ' ' + completed.length
+				: pending.length
+					? ${JSON.stringify(taskPendingLabel)} + ' ' + pending.length
+					: ${JSON.stringify(taskStateLabel)};
+			header.appendChild(badge);
+
+			card.appendChild(header);
+
+			const grid = document.createElement('div');
+			grid.className = 'task-state-grid';
+
+			function appendValueSection(label, value) {
+				if (!value) {
+					return;
+				}
+
+				const section = document.createElement('div');
+				section.className = 'task-state-section';
+
+				const sectionHeader = document.createElement('div');
+				sectionHeader.className = 'task-state-section-header';
+				sectionHeader.textContent = label;
+				section.appendChild(sectionHeader);
+
+				const sectionValue = document.createElement('div');
+				sectionValue.className = 'task-state-value';
+				sectionValue.textContent = value;
+				section.appendChild(sectionValue);
+
+				grid.appendChild(section);
+			}
+
+			function appendListSection(label, items) {
+				if (!items.length) {
+					return;
+				}
+
+				const section = document.createElement('div');
+				section.className = 'task-state-section';
+
+				const sectionHeader = document.createElement('div');
+				sectionHeader.className = 'task-state-section-header';
+				sectionHeader.textContent = label;
+				section.appendChild(sectionHeader);
+
+				const list = document.createElement('div');
+				list.className = 'task-state-list';
+				for (const itemText of items.slice(0, 5)) {
+					const row = document.createElement('div');
+					row.className = 'task-state-item';
+					row.textContent = itemText;
+					list.appendChild(row);
+				}
+				section.appendChild(list);
+
+				grid.appendChild(section);
+			}
+
+			appendValueSection(${JSON.stringify(taskObjectiveLabel)}, taskState.objective);
+			appendListSection(${JSON.stringify(taskFilesLabel)}, relatedFiles);
+			appendListSection(${JSON.stringify(taskCompletedLabel)}, completed);
+			appendListSection(${JSON.stringify(taskPendingLabel)}, pending);
+			appendValueSection(${JSON.stringify(taskNextStepLabel)}, taskState.nextStep);
+
+			card.appendChild(grid);
+			container.appendChild(card);
+		}
+
 		function renderMessages() {
 			messagesEl.innerHTML = '';
 			const messages = state.chat.messages || [];
+			renderTaskState(messagesEl);
 			if (!messages.length) {
 				const empty = document.createElement('div');
 				empty.className = 'empty';
@@ -2212,6 +2384,8 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					role.textContent = ${JSON.stringify(assistantLabel)};
 				} else if (message.role === 'user') {
 					role.textContent = ${JSON.stringify(userLabel)};
+				} else if (message.role === 'thinking') {
+					role.textContent = ${JSON.stringify(thinkingStepLabel)};
 				} else {
 					role.textContent = message.role;
 				}

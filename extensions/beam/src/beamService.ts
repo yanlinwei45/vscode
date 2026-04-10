@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import type { IBeamComposerResolvedAttachments } from './composerService';
 import { buildInlineCompletionSystemPrompt, buildSystemPrompt } from './promptPolicy';
 import { buildOpenAIChatCompletionMessages, buildOpenAIInputItems, getBeamModelOption, getBeamModelOptions, inferBeamProviderForModel, normalizeBeamModelSelection, normalizeBeamProvider, parseOpenAIFunctionArguments, resolveBeamModel, toOpenAIChatCompletionTools, toOpenAITools, type BeamProvider, type IBeamModelOption, type IBeamTurnContentBlock, type IRequestTurn, type IOpenAIInputItem } from './providerUtils';
+import { buildModelFacingUserPrompt, buildStructuredContinuationSections, deriveSessionTaskState, isContinuationOnlyPrompt, normalizeSessionTaskState, toTaskStateSections, type IBeamSessionTaskState } from './sessionTaskState';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
 
 const STORAGE_KEY = 'beam.chatSessions.v2';
@@ -61,6 +62,7 @@ export interface IBeamChatState {
 	readonly busy: boolean;
 	readonly workingLabel?: string;
 	readonly lastRequestContext?: string;
+	readonly sessionTaskState?: IBeamSessionTaskState;
 	readonly pendingToolNames?: readonly string[];
 	readonly selectedModel: string;
 	readonly availableModels: readonly IBeamModelOption[];
@@ -323,6 +325,7 @@ interface IBeamChatSessionRecord {
 	readonly title: string;
 	readonly messages: readonly IBeamChatMessage[];
 	readonly lastRequestContext?: string;
+	readonly taskState?: IBeamSessionTaskState;
 	readonly updatedAt: number;
 }
 
@@ -335,6 +338,7 @@ export class BeamService extends vscode.Disposable {
 	private busy = false;
 	private workingLabel: string | undefined;
 	private lastRequestContext: string | undefined;
+	private sessionTaskState: IBeamSessionTaskState | undefined;
 	private pendingToolNames: string[] = [];
 	private sessions: IBeamChatSessionRecord[] = [];
 	private activeSessionId: string | undefined;
@@ -366,6 +370,7 @@ export class BeamService extends vscode.Disposable {
 			busy: this.busy,
 			workingLabel: this.workingLabel,
 			lastRequestContext: this.lastRequestContext,
+			sessionTaskState: this.sessionTaskState,
 			pendingToolNames: this.pendingToolNames,
 			selectedModel: configuration.model,
 			availableModels: this.getAvailableModels(configuration),
@@ -398,6 +403,7 @@ export class BeamService extends vscode.Disposable {
 
 		if (!this.messages.length && this.activeSessionId) {
 			this.lastRequestContext = undefined;
+			this.sessionTaskState = undefined;
 			this.persistState();
 			this._onDidChangeState.fire(this.getState());
 			return;
@@ -411,6 +417,7 @@ export class BeamService extends vscode.Disposable {
 		this.activeSessionId = nextSession.id;
 		this.messages = [];
 		this.lastRequestContext = undefined;
+		this.sessionTaskState = undefined;
 		this.persistState();
 		this.log(vscode.l10n.t('Beam \u5df2\u65b0\u5efa\u5bf9\u8bdd\u3002'));
 		this._onDidChangeState.fire(this.getState());
@@ -429,6 +436,7 @@ export class BeamService extends vscode.Disposable {
 		this.activeSessionId = session.id;
 		this.messages = [...session.messages];
 		this.lastRequestContext = session.lastRequestContext;
+		this.sessionTaskState = normalizeSessionTaskState(session.taskState);
 		this.persistState();
 		this._onDidChangeState.fire(this.getState());
 	}
@@ -491,9 +499,13 @@ export class BeamService extends vscode.Disposable {
 		}
 
 		this.lastRequestContext = trimRequestContext(requestContext?.trim());
+		this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 		this.pendingToolNames = [];
 		this.workingLabel = vscode.l10n.t('正在分析需求并规划下一步...');
-		this.messages = [...this.messages, { role: 'user', content: trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002'), modelContent: trimmed || 'Please continue using the attached context.' }];
+		const userFacingPrompt = trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002');
+		const modelFacingPrompt = buildModelFacingUserPrompt(trimmed, this.sessionTaskState, hasAttachmentPayload);
+		this.messages = [...this.messages, { role: 'user', content: userFacingPrompt, modelContent: modelFacingPrompt }];
+		this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 		this.updateActiveSessionTitleFromPrompt(trimmed);
 		this.busy = true;
 		this.activeRequestCancellation.dispose();
@@ -504,6 +516,7 @@ export class BeamService extends vscode.Disposable {
 		try {
 			const content = await this.requestAssistantResponse(configuration, undefined, this.activeRequestCancellation.token, attachments);
 			this.messages = [...this.messages, { role: 'assistant', content, modelContent: content }];
+			this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 			this.persistState();
 		} catch (error) {
 			const rawMessage = error instanceof Error ? error.message : vscode.l10n.t('Beam \u8bf7\u6c42\u5931\u8d25\u3002');
@@ -514,6 +527,7 @@ export class BeamService extends vscode.Disposable {
 			}
 			this.log(vscode.l10n.t('Beam 请求失败：{0}', rawMessage));
 			this.messages = [...this.messages, { role: 'assistant', content: message, modelContent: message }];
+			this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 			this.persistState();
 		} finally {
 			this.busy = false;
@@ -1304,6 +1318,7 @@ export class BeamService extends vscode.Disposable {
 				round: round + 1
 			}
 		}];
+		this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 		this.persistState();
 		this._onDidChangeState.fire(this.getState());
 	}
@@ -1347,6 +1362,7 @@ export class BeamService extends vscode.Disposable {
 				id: toolUse.id,
 				content: modelContent
 			});
+			this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 			this.persistState();
 			this._onDidChangeState.fire(this.getState());
 		}
@@ -1369,6 +1385,7 @@ export class BeamService extends vscode.Disposable {
 			this.activeSessionId = session.id;
 			this.messages = [];
 			this.lastRequestContext = undefined;
+			this.sessionTaskState = undefined;
 			return;
 		}
 
@@ -1378,6 +1395,7 @@ export class BeamService extends vscode.Disposable {
 		this.activeSessionId = activeSession.id;
 		this.messages = [...activeSession.messages];
 		this.lastRequestContext = activeSession.lastRequestContext;
+		this.sessionTaskState = normalizeSessionTaskState(activeSession.taskState);
 		this.selectedModel = normalizeBeamModelSelection(this.storage.get<string>(SELECTED_MODEL_STORAGE_KEY));
 	}
 
@@ -1490,7 +1508,7 @@ export class BeamService extends vscode.Disposable {
 
 				return {
 					role: 'user',
-					content: this.buildUserTurnContent(message.content, {
+					content: this.buildUserTurnContent(message.modelContent || message.content, {
 						attachments: index === lastUserIndex ? attachments : undefined,
 						includeStoredContext: index === lastUserIndex,
 						continuationMemory: index === lastUserIndex ? continuationMemory : undefined
@@ -1546,15 +1564,15 @@ export class BeamService extends vscode.Disposable {
 			return undefined;
 		}
 
-		const lines = this.messages
-			.slice(Math.max(0, lastUserIndex - 36), lastUserIndex)
-			.map(message => toContinuationMemoryLine(message))
-			.filter((value): value is string => Boolean(value));
-		if (!lines.length) {
+		const windowMessages = this.messages.slice(Math.max(0, lastUserIndex - 36), lastUserIndex);
+		const sections = buildStructuredContinuationSections(windowMessages);
+		const taskStateSections = this.sessionTaskState ? toTaskStateSections(this.sessionTaskState) : [];
+		const allSections = [...taskStateSections, ...sections];
+		if (!allSections.length) {
 			return undefined;
 		}
 
-		return trimContinuationMemory(['Session memory from earlier turns:', ...lines].join('\n'));
+		return trimContinuationMemory(['Session memory from earlier turns:', ...allSections].join('\n'));
 	}
 
 	private getActiveSession(): IBeamChatSessionRecord | undefined {
@@ -1567,6 +1585,7 @@ export class BeamService extends vscode.Disposable {
 			title,
 			messages: [],
 			lastRequestContext: undefined,
+			taskState: undefined,
 			updatedAt: Date.now()
 		};
 	}
@@ -1578,12 +1597,17 @@ export class BeamService extends vscode.Disposable {
 			title: existing?.title || DEFAULT_SESSION_TITLE,
 			messages: this.messages.slice(-300),
 			lastRequestContext: this.lastRequestContext,
+			taskState: this.sessionTaskState,
 			updatedAt: Date.now()
 		};
 	}
 
+	private deriveSessionTaskState(messages: readonly IBeamChatMessage[]): IBeamSessionTaskState | undefined {
+		return deriveSessionTaskState(messages, this.sessionTaskState);
+	}
+
 	private updateActiveSessionTitleFromPrompt(prompt: string): void {
-		if (!prompt || !this.activeSessionId) {
+		if (!prompt || !this.activeSessionId || isContinuationOnlyPrompt(prompt)) {
 			return;
 		}
 
@@ -1914,54 +1938,6 @@ function truncateTextValue(value: string, maxLength: number): string {
 	return `${value.slice(0, Math.max(0, maxLength - 8))} ...`;
 }
 
-function toContinuationMemoryLine(message: IBeamChatMessage): string | undefined {
-	const content = compactContinuationContent(message);
-	if (!content) {
-		return undefined;
-	}
-
-	switch (message.role) {
-		case 'user':
-			return `User request: ${content}`;
-		case 'assistant':
-			return `Assistant reply: ${content}`;
-		case 'thinking':
-			return `Working analysis: ${content}`;
-		case 'tool':
-			return `Tool ${message.metadata?.toolName || 'unknown_tool'}: ${content}`;
-		default:
-			return undefined;
-	}
-}
-
-function compactContinuationContent(message: IBeamChatMessage): string {
-	const base = (message.modelContent || message.content || '').trim();
-	if (!base) {
-		return '';
-	}
-
-	if (message.role === 'tool') {
-		const lines = base
-			.split('\n')
-			.map(line => line.trim())
-			.filter(Boolean)
-			.filter(line =>
-				line.startsWith('Summary:')
-				|| line.startsWith('-- ')
-				|| line.startsWith('Changed file:')
-				|| line.startsWith('Location:')
-				|| line.startsWith('Stats:')
-				|| line.startsWith('Status:')
-				|| line.startsWith('Command:')
-				|| line.startsWith('Cwd:')
-				|| line.startsWith('Exit code:')
-			)
-			.slice(0, 8);
-		return truncateTextValue((lines.length ? lines : [base]).join(' | '), 700);
-	}
-
-	return truncateTextValue(base.replace(/\s+/g, ' ').trim(), message.role === 'thinking' ? 420 : 520);
-}
 
 function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean): number {
 	for (let index = values.length - 1; index >= 0; index--) {
