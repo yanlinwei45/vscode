@@ -48,6 +48,8 @@ export interface IBeamProposalChangeSummary {
 	readonly isNewFile: boolean;
 	readonly applied: boolean;
 	readonly summary: string;
+	readonly originalText: string;
+	readonly proposedText: string;
 }
 
 export interface IBeamActiveProposal {
@@ -643,7 +645,9 @@ export class BeamProposalService implements vscode.TextDocumentContentProvider, 
 			changeCount,
 			isNewFile: proposal.isNewFile,
 			applied: proposal.applied,
-			summary
+			summary,
+			originalText: proposal.originalText,
+			proposedText: proposal.proposedText
 		};
 	}
 

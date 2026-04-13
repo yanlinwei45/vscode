@@ -56,7 +56,7 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 					await this.contextService.buildPromptContext(),
 					resolvedAttachments.context
 				);
-				await this.service.sendUserMessageWithAttachments(message.prompt, requestContext, resolvedAttachments);
+				await this.service.sendUserMessageWithAttachments(message.prompt, requestContext, resolvedAttachments, 'sidebar.send');
 				this.composerService.clear();
 				return;
 			}
@@ -229,13 +229,8 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 		const focusProposalLabel = vscode.l10n.t('\u5b9a\u4f4d\u5230\u7f16\u8f91\u5668');
 		const nextProposalLabel = vscode.l10n.t('\u4e0b\u4e00\u4e2a\u6587\u4ef6');
 		const previousProposalLabel = vscode.l10n.t('\u4e0a\u4e00\u4e2a\u6587\u4ef6');
-		const toolCountLabel = vscode.l10n.t('\u5171 {0} \u6b65');
 		const runningToolLabel = vscode.l10n.t('\u6b63\u5728\u5904\u7406\uff1a{0}');
-		const workingLabel = vscode.l10n.t('\u6b63\u5728\u5de5\u4f5c');
-		const toolExecutionSummaryLabel = vscode.l10n.t('\u6267\u884c\u8f68\u8ff9');
 		const expandDetailsLabel = vscode.l10n.t('\u5c55\u5f00\u8be6\u60c5');
-		const thinkingStepLabel = vscode.l10n.t('\u5206\u6790');
-		const toolStepLabel = vscode.l10n.t('\u52a8\u4f5c');
 		const taskStateLabel = vscode.l10n.t('\u4efb\u52a1\u72b6\u6001');
 		const taskObjectiveLabel = vscode.l10n.t('\u5f53\u524d\u76ee\u6807');
 		const taskFilesLabel = vscode.l10n.t('\u76f8\u5173\u6587\u4ef6');
@@ -390,11 +385,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			border-color: color-mix(in srgb, var(--vscode-button-background) 22%, var(--vscode-panel-border));
 		}
 		.message.tool {
-			background: color-mix(in srgb, var(--vscode-textLink-foreground) 6%, transparent);
+			background: transparent;
 			box-shadow: none;
 			position: relative;
-			padding-left: 14px;
-			margin-right: 10px;
+			padding: 2px 0;
+			margin-right: 0;
+			border: 0;
+			border-radius: 0;
+			max-width: 100%;
 		}
 		.message.thinking {
 			background:
@@ -405,6 +403,15 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			padding-left: 14px;
 			margin-right: 10px;
 			border-style: dashed;
+		}
+		.message.thinking.analysis-message {
+			background: transparent;
+			box-shadow: none;
+			padding: 2px 0;
+			margin-right: 0;
+			border: 0;
+			border-radius: 0;
+			max-width: 100%;
 		}
 		.message.tool::before {
 			content: '';
@@ -421,6 +428,10 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			width: 3px;
 			border-radius: 16px 0 0 16px;
 			background: color-mix(in srgb, var(--vscode-button-background) 72%, transparent);
+		}
+		.message.tool::before,
+		.message.thinking.analysis-message::before {
+			display: none;
 		}
 		.message.pending {
 			border-style: dashed;
@@ -569,6 +580,77 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			font-weight: 700;
 			margin-bottom: 6px;
 			opacity: 0.82;
+		}
+		.analysis-message {
+			padding-left: 12px;
+		}
+		.analysis-message .content {
+			gap: 8px;
+		}
+		.tool-trace {
+			display: grid;
+			gap: 8px;
+		}
+		.trace-header {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			min-width: 0;
+			font-size: 13px;
+			line-height: 1.5;
+			font-weight: 600;
+		}
+		.trace-header.summary {
+			cursor: pointer;
+			list-style: none;
+		}
+		.trace-header.summary::-webkit-details-marker {
+			display: none;
+		}
+		.trace-header.summary::after {
+			content: '>';
+			margin-left: auto;
+			opacity: 0.7;
+			font-size: 11px;
+			transform: translateY(-1px);
+		}
+		.trace-disclosure[open] > .trace-header.summary::after {
+			content: 'v';
+		}
+		.trace-label {
+			flex: none;
+		}
+		.trace-arrow {
+			flex: none;
+			opacity: 0.62;
+		}
+		.trace-path {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+			font-weight: 500;
+			opacity: 0.9;
+		}
+		.trace-body {
+			display: grid;
+			gap: 8px;
+			padding-top: 6px;
+			margin-top: 2px;
+		}
+		.trace-disclosure {
+			display: grid;
+			gap: 0;
+		}
+		.trace-disclosure > .trace-body {
+			margin-left: 2px;
+		}
+		.trace-meta {
+			font-size: 11px;
+			opacity: 0.68;
+			white-space: pre-wrap;
+			word-break: break-word;
 		}
 		.workflow-group {
 			display: grid;
@@ -1781,6 +1863,261 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			};
 		}
 
+		function isToolHeaderLine(value) {
+			return /^(摘要：|Summary:|-- |变更文件：|Changed file:|位置：|Location:|统计：|Stats:|状态：|Status:|命令：|Command:|目录：|Cwd:|退出码：|Exit code:|改动：|新增：|删除：)/.test(value)
+				|| /等待用户确认/.test(value)
+				|| /^Applied .*pending .*Waiting for user confirmation\./i.test(value);
+		}
+
+		function splitToolMessageSections(message) {
+			const source = String(message.content || '').replace(/\r\n/g, '\n');
+			const lines = source.split('\n');
+			const headerLines = [];
+			let bodyStart = -1;
+
+			for (let index = 0; index < lines.length; index++) {
+				const trimmed = lines[index].trim();
+				if (!trimmed) {
+					continue;
+				}
+
+				if (isToolHeaderLine(trimmed)) {
+					headerLines.push(trimmed);
+					continue;
+				}
+
+				bodyStart = index;
+				break;
+			}
+
+			return {
+				source,
+				headerLines,
+				bodyText: bodyStart === -1 ? '' : lines.slice(bodyStart).join('\n').trim()
+			};
+		}
+
+		function summarizeTraceItems(items, fallback) {
+			const cleaned = items
+				.map(item => item.replace(/^--\s*/, '').trim())
+				.filter(Boolean);
+			if (!cleaned.length) {
+				return fallback || '';
+			}
+			if (cleaned.length === 1) {
+				return cleaned[0];
+			}
+			return cleaned.slice(0, 3).join(', ') + (cleaned.length > 3 ? ' ...' : '');
+		}
+
+		function extractHeaderValue(headerLines, patterns) {
+			for (const line of headerLines) {
+				for (const pattern of patterns) {
+					if (line.startsWith(pattern)) {
+						return line.slice(pattern.length).trim();
+					}
+				}
+			}
+			return '';
+		}
+
+		function inferFenceLanguageFromPath(filePath) {
+			const match = String(filePath || '').match(/\.([a-z0-9]+)$/i);
+			const extension = match ? match[1].toLowerCase() : '';
+			switch (extension) {
+				case 'ts':
+				case 'tsx':
+				case 'js':
+				case 'jsx':
+				case 'json':
+				case 'css':
+				case 'scss':
+				case 'html':
+				case 'rs':
+				case 'py':
+				case 'sh':
+				case 'yaml':
+				case 'yml':
+				case 'toml':
+					return extension;
+				case 'md':
+					return 'markdown';
+				default:
+					return 'text';
+			}
+		}
+
+		function ensureMarkdownCodeBlock(text, filePath) {
+			const value = String(text || '').trim();
+			if (!value) {
+				return '';
+			}
+			const fence = String.fromCharCode(96, 96, 96);
+			if (value.startsWith(fence)) {
+				return value;
+			}
+			const language = inferFenceLanguageFromPath(filePath);
+			return fence + language + '\n' + value + '\n' + fence;
+		}
+
+		function buildToolDisplayData(message) {
+			const toolName = message.metadata?.toolName || '';
+			const parsed = parseToolMessageSummary(message);
+			const items = (parsed?.items || []).map(item => item.replace(/^--\s*/, '').trim()).filter(Boolean);
+			const sections = splitToolMessageSections(message);
+			const fallbackLabel = toolLabels[toolName] || toolName || ${JSON.stringify(toolLabelFallback)};
+			const changedFile = extractHeaderValue(sections.headerLines, ['改动：', '新增：', '删除：', '变更文件：', 'Changed file:']) || items[0] || '';
+			const commandLine = extractHeaderValue(sections.headerLines, ['命令：', 'Command:']);
+
+			switch (toolName) {
+				case 'read_file':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('读取'))},
+						headline: summarizeTraceItems(items, parsed?.summary || fallbackLabel),
+						collapsible: true,
+						bodyText: ensureMarkdownCodeBlock(sections.bodyText, items[0] || ''),
+						metaText: ''
+					};
+				case 'search_workspace':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('搜索'))},
+						headline: summarizeTraceItems(items, parsed?.summary || fallbackLabel),
+						collapsible: true,
+						bodyText: sections.bodyText || (parsed?.details || []).join('\n'),
+						metaText: ''
+					};
+				case 'list_directory':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('列出目录'))},
+						headline: parsed?.summary || fallbackLabel,
+						collapsible: true,
+						bodyText: sections.source,
+						metaText: ''
+					};
+				case 'get_diagnostics':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('诊断'))},
+						headline: summarizeTraceItems(items, parsed?.summary || fallbackLabel),
+						collapsible: true,
+						bodyText: sections.bodyText || (parsed?.details || []).join('\n'),
+						metaText: ''
+					};
+				case 'run_command':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('执行命令'))},
+						headline: commandLine || fallbackLabel,
+						collapsible: false,
+						bodyText: sections.bodyText,
+						metaText: [extractHeaderValue(sections.headerLines, ['目录：', 'Cwd:']), extractHeaderValue(sections.headerLines, ['退出码：', 'Exit code:'])].filter(Boolean).join('\n')
+					};
+				case 'create_file':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('新增'))},
+						headline: changedFile || fallbackLabel,
+						collapsible: false,
+						bodyText: sections.bodyText,
+						metaText: ''
+					};
+				case 'delete_file':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('删除'))},
+						headline: changedFile || fallbackLabel,
+						collapsible: false,
+						bodyText: sections.bodyText,
+						metaText: ''
+					};
+				case 'write_file':
+				case 'replace_in_file':
+				case 'create_edit_proposal':
+					return {
+						label: ${JSON.stringify(vscode.l10n.t('改动'))},
+						headline: changedFile || fallbackLabel,
+						collapsible: false,
+						bodyText: sections.bodyText,
+						metaText: ''
+					};
+				default:
+					return {
+						label: fallbackLabel,
+						headline: summarizeTraceItems(items, parsed?.summary || fallbackLabel),
+						collapsible: true,
+						bodyText: sections.bodyText || (parsed?.details || []).join('\n'),
+						metaText: ''
+					};
+			}
+		}
+
+		function appendTraceHeader(container, label, headline, summaryMode) {
+			const header = document.createElement(summaryMode ? 'summary' : 'div');
+			header.className = summaryMode ? 'trace-header summary' : 'trace-header';
+
+			const labelEl = document.createElement('span');
+			labelEl.className = 'trace-label';
+			labelEl.textContent = label;
+			header.appendChild(labelEl);
+
+			if (headline) {
+				const arrow = document.createElement('span');
+				arrow.className = 'trace-arrow';
+				arrow.textContent = '->';
+				header.appendChild(arrow);
+
+				const path = document.createElement('span');
+				path.className = 'trace-path';
+				path.textContent = headline;
+				header.appendChild(path);
+			}
+
+			container.appendChild(header);
+			return header;
+		}
+
+		function renderToolTrace(container, message) {
+			const display = buildToolDisplayData(message);
+
+			if (display.collapsible) {
+				const disclosure = document.createElement('details');
+				disclosure.className = 'trace-disclosure';
+				appendTraceHeader(disclosure, display.label, display.headline, true);
+
+				const body = document.createElement('div');
+				body.className = 'trace-body';
+				if (display.metaText) {
+					const meta = document.createElement('div');
+					meta.className = 'trace-meta';
+					meta.textContent = display.metaText;
+					body.appendChild(meta);
+				}
+				if (display.bodyText) {
+					renderMarkdownBlocks(body, display.bodyText);
+				}
+				disclosure.appendChild(body);
+				container.appendChild(disclosure);
+				return;
+			}
+
+			const trace = document.createElement('div');
+			trace.className = 'tool-trace';
+			appendTraceHeader(trace, display.label, display.headline, false);
+
+			if (display.metaText || display.bodyText) {
+				const body = document.createElement('div');
+				body.className = 'trace-body';
+				if (display.metaText) {
+					const meta = document.createElement('div');
+					meta.className = 'trace-meta';
+					meta.textContent = display.metaText;
+					body.appendChild(meta);
+				}
+				if (display.bodyText) {
+					renderMarkdownBlocks(body, display.bodyText);
+				}
+				trace.appendChild(body);
+			}
+
+			container.appendChild(trace);
+		}
+
 		function isCompactFileSummaryRow(value) {
 			return /^\-\-\s+.+?(\s{2,}[+\-~]\d+.*|\s{2,}>|\s{2,}[+\-~]\d+.*\s{2,}>)$/.test(value);
 		}
@@ -1941,26 +2278,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 			container.appendChild(card);
 		}
 
-		function createToolDisplayItems(messages) {
-			const displayItems = [];
-			for (const message of messages) {
-				if (message.role !== 'tool') {
-					displayItems.push({ type: 'message', message });
-					continue;
-				}
-
-				const previous = displayItems[displayItems.length - 1];
-				if (previous && previous.type === 'toolGroup') {
-					previous.messages.push(message);
-					continue;
-				}
-
-				displayItems.push({ type: 'toolGroup', messages: [message] });
-			}
-
-			return displayItems;
-		}
-
 		function createPendingToolDisplayItem() {
 			const pendingToolNames = state.chat.pendingToolNames || [];
 			const labels = pendingToolNames
@@ -1970,99 +2287,6 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				type: 'pending',
 				label: state.chat.workingLabel || ${JSON.stringify(runningToolLabel)}.replace('{0}', labels.length ? labels.join('\u3001') : ${JSON.stringify(preparingLabel)})
 			};
-		}
-
-		function renderToolGroup(container, messages) {
-			const group = document.createElement('details');
-			group.className = 'workflow-group';
-			group.open = false;
-
-			const summary = document.createElement('summary');
-			summary.className = 'workflow-summary';
-
-			const summaryCopy = document.createElement('div');
-			summaryCopy.className = 'workflow-summary-copy';
-
-			const title = document.createElement('div');
-			title.className = 'workflow-title';
-			title.textContent = ${JSON.stringify(toolExecutionSummaryLabel)};
-			summaryCopy.appendChild(title);
-
-			const hint = document.createElement('div');
-			hint.className = 'workflow-summary-hint';
-			hint.textContent = ${JSON.stringify(expandDetailsLabel)};
-			summaryCopy.appendChild(hint);
-
-			const previewSections = createWorkflowPreviewSections(messages);
-			if (previewSections.length) {
-				const summaryLines = document.createElement('div');
-				summaryLines.className = 'workflow-summary-lines';
-				for (const section of previewSections.slice(0, 4)) {
-					const titleLine = document.createElement('div');
-					titleLine.className = 'workflow-summary-line section';
-					titleLine.textContent = section.title;
-					summaryLines.appendChild(titleLine);
-
-					for (const item of section.items.slice(0, 4)) {
-						const detailLine = document.createElement('div');
-						detailLine.className = 'workflow-summary-line detail';
-						detailLine.textContent = item;
-						summaryLines.appendChild(detailLine);
-					}
-				}
-				summaryCopy.appendChild(summaryLines);
-			}
-			summary.appendChild(summaryCopy);
-
-			const count = document.createElement('div');
-			count.className = 'workflow-step-count';
-			count.textContent = ${JSON.stringify(toolCountLabel)}.replace('{0}', String(messages.length));
-			summary.appendChild(count);
-			group.appendChild(summary);
-
-			const items = document.createElement('div');
-			items.className = 'workflow-items';
-			items.hidden = true;
-			group.addEventListener('toggle', () => {
-				items.hidden = !group.open;
-			});
-			for (const message of messages) {
-				const item = document.createElement('div');
-				item.className = message.role === 'thinking' ? 'workflow-item thinking' : 'workflow-item';
-
-				const itemHeader = document.createElement('div');
-				itemHeader.className = 'workflow-item-header';
-
-				const title = document.createElement('div');
-				title.className = 'workflow-item-title';
-				if (message.role === 'thinking') {
-					title.textContent = message.metadata?.title || ${JSON.stringify(thinkingStepLabel)};
-				} else {
-					title.textContent = message.metadata?.title || (message.metadata && message.metadata.toolName ? (toolLabels[message.metadata.toolName] || message.metadata.toolName) : ${JSON.stringify(toolLabelFallback)});
-				}
-				itemHeader.appendChild(title);
-
-				const kind = document.createElement('div');
-				kind.className = 'workflow-item-kind';
-				kind.textContent = message.role === 'thinking' ? ${JSON.stringify(thinkingStepLabel)} : ${JSON.stringify(toolStepLabel)};
-				itemHeader.appendChild(kind);
-
-				item.appendChild(itemHeader);
-
-				const body = document.createElement('div');
-				body.className = 'workflow-item-body';
-				if (message.role === 'tool') {
-					renderToolMessageCard(body, message);
-				} else {
-					renderContent(body, message.content);
-				}
-				item.appendChild(body);
-
-				items.appendChild(item);
-			}
-
-			group.appendChild(items);
-			container.appendChild(group);
 		}
 
 		function renderSessions() {
@@ -2327,76 +2551,52 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 				messagesEl.appendChild(empty);
 			}
 
-			const displayItems = createToolDisplayItems(messages);
-			if (state.chat.busy) {
-				displayItems.push(createPendingToolDisplayItem());
-			}
-
-			for (const displayItem of displayItems) {
-				if (displayItem.type === 'pending') {
-					const pendingItem = document.createElement('div');
-					pendingItem.className = 'message pending';
-
-					const role = document.createElement('div');
-					role.className = 'role';
-					role.textContent = ${JSON.stringify(workingLabel)};
-					pendingItem.appendChild(role);
-
-					const content = document.createElement('div');
-					content.className = 'content';
-					const paragraph = document.createElement('p');
-					paragraph.textContent = displayItem.label;
-					content.appendChild(paragraph);
-					pendingItem.appendChild(content);
-
-					messagesEl.appendChild(pendingItem);
-					continue;
-				}
-
-				if (displayItem.type === 'toolGroup') {
-					const toolItem = document.createElement('div');
-					toolItem.className = 'message thinking';
-
-					const role = document.createElement('div');
-					role.className = 'role';
-					role.textContent = ${JSON.stringify(workingLabel)};
-					toolItem.appendChild(role);
-
-					const content = document.createElement('div');
-					content.className = 'content';
-					renderToolGroup(content, displayItem.messages);
-					toolItem.appendChild(content);
-
-					messagesEl.appendChild(toolItem);
-					continue;
-				}
-
-				const message = displayItem.message;
+			for (const message of messages) {
 				const item = document.createElement('div');
 				item.className = 'message ' + message.role;
 				if (String(message.content || '').startsWith('\u9519\u8bef\uff1a')) {
 					item.className += ' error';
 				}
 
-				const role = document.createElement('div');
-				role.className = 'role';
-				if (message.role === 'assistant') {
-					role.textContent = ${JSON.stringify(assistantLabel)};
-				} else if (message.role === 'user') {
-					role.textContent = ${JSON.stringify(userLabel)};
-				} else if (message.role === 'thinking') {
-					role.textContent = ${JSON.stringify(thinkingStepLabel)};
-				} else {
-					role.textContent = message.role;
-				}
-				item.appendChild(role);
-
 				const content = document.createElement('div');
 				content.className = 'content';
-				renderContent(content, message.content);
+				if (message.role === 'tool') {
+					renderToolTrace(content, message);
+				} else {
+					if (message.role === 'thinking') {
+						item.classList.add('analysis-message');
+					} else {
+						const role = document.createElement('div');
+						role.className = 'role';
+						if (message.role === 'assistant') {
+							role.textContent = ${JSON.stringify(assistantLabel)};
+						} else if (message.role === 'user') {
+							role.textContent = ${JSON.stringify(userLabel)};
+						} else {
+							role.textContent = message.role;
+						}
+						item.appendChild(role);
+					}
+					renderContent(content, message.content);
+				}
 				item.appendChild(content);
 
 				messagesEl.appendChild(item);
+			}
+
+			if (state.chat.busy) {
+				const pending = createPendingToolDisplayItem();
+				const pendingItem = document.createElement('div');
+				pendingItem.className = 'message pending';
+
+				const content = document.createElement('div');
+				content.className = 'content';
+				const paragraph = document.createElement('p');
+				paragraph.textContent = pending.label;
+				content.appendChild(paragraph);
+				pendingItem.appendChild(content);
+
+				messagesEl.appendChild(pendingItem);
 			}
 
 			messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -2589,8 +2789,14 @@ export class BeamSidebarProvider extends vscode.Disposable implements vscode.Web
 
 		const previous = vscode.getState();
 		if (previous) {
+			const restoredChat = previous.chat || { messages: [], busy: false, sessions: [], availableModels: [], selectedModel: '' };
 			state = {
-				chat: previous.chat || { messages: [], busy: false, sessions: [], availableModels: [], selectedModel: '' },
+				chat: {
+					...restoredChat,
+					busy: false,
+					workingLabel: undefined,
+					pendingToolNames: []
+				},
 				composer: previous.composer || { attachments: [] },
 				context: previous.context || { summary: [] },
 				proposal: previous.proposal || { active: false }

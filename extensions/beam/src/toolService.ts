@@ -15,7 +15,7 @@ const MAX_SEARCH_RESULTS = 20;
 const MAX_SEARCH_FILE_SCAN = 100;
 const MAX_DIRECTORY_ENTRIES = 50;
 const MAX_COMMAND_OUTPUT = 4000;
-const COMMAND_TIMEOUT_MS = 120000;
+const COMMAND_TIMEOUT_MS = 30000;
 
 export interface IBeamToolDefinition {
 	readonly name: string;
@@ -582,6 +582,11 @@ export class BeamToolService {
 			const timer = setTimeout(() => {
 				disposable.dispose();
 				cancellationDisposable?.dispose();
+				try {
+					terminal.sendText('\u0003', false);
+				} catch {
+					// Best-effort interrupt.
+				}
 				resolve(undefined);
 			}, COMMAND_TIMEOUT_MS);
 
@@ -617,8 +622,26 @@ export class BeamToolService {
 		const displayHeader = cwdUri ? `\u76ee\u5f55\uff1a${getEditorLabel(cwdUri)}` : '\u76ee\u5f55\uff1a\u5de5\u4f5c\u533a\u6839\u76ee\u5f55';
 		const displayCodeLabel = exitCode === undefined ? '\u9000\u51fa\u7801\uff1a\u672a\u77e5' : `\u9000\u51fa\u7801\uff1a${exitCode}`;
 		return this.createToolText(
-			[header, codeLabel, `Command: ${commandLine}`, output].filter(Boolean).join('\n'),
-			[displayHeader, displayCodeLabel, `\u547d\u4ee4\uff1a${commandLine}`, output].filter(Boolean).join('\n')
+			[
+				'Summary: Executed command',
+				`Command: ${commandLine}`,
+				header,
+				codeLabel,
+				'',
+				'```text',
+				output || '(no output)',
+				'```'
+			].join('\n'),
+			[
+				'摘要：已执行命令',
+				`\u547d\u4ee4\uff1a${commandLine}`,
+				displayHeader,
+				displayCodeLabel,
+				'',
+				'```text',
+				output || '\uff08\u65e0\u8f93\u51fa\uff09',
+				'```'
+			].join('\n')
 		);
 	}
 
@@ -722,27 +745,54 @@ export class BeamToolService {
 			...statParts,
 			displayLinePart !== vscode.l10n.t('\u6574\u6587\u4ef6') ? '>' : ''
 		].filter(Boolean);
+		const displayTitle = summary.isNewFile
+			? vscode.l10n.t('新增')
+			: summary.mode === 'delete'
+				? vscode.l10n.t('删除')
+				: vscode.l10n.t('改动');
+		const modelTitle = summary.isNewFile
+			? 'Created'
+			: summary.mode === 'delete'
+				? 'Deleted'
+				: 'Changed';
+		const language = inferCodeFenceLanguage(summary.label);
+		const codeFenceHeader = language ? `\`\`\`${language}` : '```';
+		const contentForDisplay = summary.mode === 'delete'
+			? summary.originalText
+			: summary.proposedText;
+		const contentForModel = summary.mode === 'delete'
+			? summary.originalText
+			: summary.proposedText;
 
 		return this.createToolText(
 			[
 				modelIntro,
 				'',
-				'Summary: Modified 1 file',
+				`Summary: ${modelTitle} 1 file`,
 				`-- ${modelSummaryRowParts.join('  ') || summary.label}`,
 				`Changed file: ${summary.label}`,
 				`Location: ${modelLinePart}`,
 				`Stats: ${statParts.join('  ') || 'Code differences detected'}`,
 				'Status: Editor content has been modified as a pending proposal. The user can accept or reject it in Beam.',
+				'',
+				codeFenceHeader,
+				contentForModel,
+				'```'
 			].join('\n'),
 			[
 				displayIntro,
 				'',
 				vscode.l10n.t('摘要：已修改 1 个文件'),
 				`-- ${displaySummaryRowParts.join('  ') || summary.label}`,
+				`${displayTitle}\uff1a${summary.label}`,
 				vscode.l10n.t('变更文件：{0}', summary.label),
 				vscode.l10n.t('位置：{0}', displayLinePart),
 				vscode.l10n.t('统计：{0}', statParts.join('  ') || vscode.l10n.t('存在代码差异')),
 				vscode.l10n.t('状态：已修改编辑器内容，可在 Beam 中接受或拒绝。'),
+				'',
+				codeFenceHeader,
+				contentForDisplay,
+				'```'
 			].join('\n')
 		);
 	}
@@ -851,6 +901,30 @@ function formatCompactChangeStats(summary: Pick<IBeamProposalChangeSummary, 'add
 		stats.push(`~${summary.modifiedLines}`);
 	}
 	return stats;
+}
+
+function inferCodeFenceLanguage(filePath: string): string {
+	const extension = path.extname(filePath).replace(/^\./, '').toLowerCase();
+	switch (extension) {
+		case 'ts':
+		case 'tsx':
+		case 'js':
+		case 'jsx':
+		case 'json':
+		case 'css':
+		case 'scss':
+		case 'html':
+		case 'md':
+		case 'rs':
+		case 'py':
+		case 'sh':
+		case 'yaml':
+		case 'yml':
+		case 'toml':
+			return extension === 'md' ? 'markdown' : extension;
+		default:
+			return '';
+	}
 }
 
 function stripAnsi(value: string): string {

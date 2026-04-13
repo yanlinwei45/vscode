@@ -5,7 +5,7 @@
 
 import 'mocha';
 import * as assert from 'assert';
-import { buildSystemPrompt, COMPLEX_TASK_POLICY, DEFAULT_SYSTEM_PROMPT, PROPOSAL_ONLY_POLICY, SESSION_CONTINUITY_POLICY, TASK_STATE_POLICY } from '../promptPolicy';
+import { buildSystemPrompt, COMPLEX_TASK_POLICY, DEFAULT_SYSTEM_PROMPT, PROPOSAL_ONLY_POLICY, SESSION_CONTINUITY_POLICY, SIMPLE_QUERY_POLICY, TASK_STATE_POLICY } from '../promptPolicy';
 
 suite('Beam Prompt Policy', () => {
 
@@ -13,11 +13,13 @@ suite('Beam Prompt Policy', () => {
 		const prompt = buildSystemPrompt();
 
 		assert.ok(prompt.includes(DEFAULT_SYSTEM_PROMPT));
+		assert.ok(prompt.includes(SIMPLE_QUERY_POLICY));
 		assert.ok(prompt.includes(COMPLEX_TASK_POLICY));
 		assert.ok(prompt.includes(SESSION_CONTINUITY_POLICY));
 		assert.ok(prompt.includes(TASK_STATE_POLICY));
 		assert.ok(prompt.includes(PROPOSAL_ONLY_POLICY));
 		assert.ok(prompt.includes('`run_command` is only for read-only inspection'));
+		assert.ok(prompt.includes('do not keep searching just to be exhaustive'));
 		assert.ok(prompt.includes('Complex-task requirement'));
 		assert.ok(prompt.includes('Continuation requirement'));
 		assert.ok(prompt.includes('Task-state requirement'));
@@ -29,6 +31,7 @@ suite('Beam Prompt Policy', () => {
 		const prompt = buildSystemPrompt(configuredPrompt);
 
 		assert.ok(prompt.startsWith(configuredPrompt));
+		assert.ok(prompt.includes(SIMPLE_QUERY_POLICY));
 		assert.ok(prompt.includes(COMPLEX_TASK_POLICY));
 		assert.ok(prompt.includes(SESSION_CONTINUITY_POLICY));
 		assert.ok(prompt.includes(TASK_STATE_POLICY));

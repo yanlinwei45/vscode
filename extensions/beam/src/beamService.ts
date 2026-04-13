@@ -11,15 +11,16 @@ import { buildInlineCompletionSystemPrompt, buildSystemPrompt } from './promptPo
 import { buildOpenAIChatCompletionMessages, buildOpenAIInputItems, getBeamModelOption, getBeamModelOptions, inferBeamProviderForModel, normalizeBeamModelSelection, normalizeBeamProvider, parseOpenAIFunctionArguments, resolveBeamModel, toOpenAIChatCompletionTools, toOpenAITools, type BeamProvider, type IBeamModelOption, type IBeamTurnContentBlock, type IRequestTurn, type IOpenAIInputItem } from './providerUtils';
 import { buildModelFacingUserPrompt, buildStructuredContinuationSections, deriveSessionTaskState, isContinuationOnlyPrompt, normalizeSessionTaskState, toTaskStateSections, type IBeamSessionTaskState } from './sessionTaskState';
 import { BeamToolService, type IBeamToolDefinition } from './toolService';
+import { BeamToolLoopGuard } from './toolLoopGuard';
 
 const STORAGE_KEY = 'beam.chatSessions.v2';
 const ACTIVE_SESSION_STORAGE_KEY = 'beam.activeChatSessionId.v1';
 const SELECTED_MODEL_STORAGE_KEY = 'beam.selectedModel.v1';
 const ACCESS_TOKEN_STORAGE_KEY = 'beam.accessToken.v2';
 const REQUEST_HISTORY_LIMIT = 30;
-const REQUEST_TIMEOUT_MS = 120000;
-const MAX_REQUEST_ATTEMPTS = 11;
-const REQUEST_RETRY_BACKOFF_MS = [1000, 1500, 2500, 4000, 6000, 8000, 12000, 16000, 20000, 25000];
+const REQUEST_TIMEOUT_MS = 45000;
+const MAX_REQUEST_ATTEMPTS = 5;
+const REQUEST_RETRY_BACKOFF_MS = [800, 1500, 2500, 4000];
 const MAX_SESSIONS = 20;
 const MAX_HISTORY_CHAR_BUDGET = 12000;
 const MAX_MESSAGE_CHAR_BUDGET = 3200;
@@ -36,6 +37,28 @@ const OPENAI_RESPONSES_REASONING_EFFORT = 'xhigh';
 const OPENAI_RESPONSES_INCLUDE = ['reasoning.encrypted_content'];
 const CODEX_COMPAT_ORIGINATOR = 'codex_vscode';
 const CODEX_COMPAT_USER_AGENT_VERSION = '0.116.0';
+const SIMPLE_QUERY_MAX_CHARS = 160;
+const SIMPLE_QUERY_MARKERS = [
+	'什么',
+	'怎么',
+	'为什么',
+	'哪个',
+	'哪种',
+	'是否',
+	'能不能',
+	'可以吗',
+	'帮我看看',
+	'解释',
+	'说明',
+	'介绍',
+	'问题',
+	'why',
+	'what',
+	'how',
+	'which',
+	'explain',
+	'summarize'
+];
 
 const DEFAULT_SESSION_TITLE = '\u65b0\u5bf9\u8bdd';
 
@@ -441,8 +464,8 @@ export class BeamService extends vscode.Disposable {
 		this._onDidChangeState.fire(this.getState());
 	}
 
-	async sendUserMessage(prompt: string, requestContext?: string): Promise<void> {
-		await this.sendUserMessageWithAttachments(prompt, requestContext);
+	async sendUserMessage(prompt: string, requestContext?: string, source?: string): Promise<void> {
+		await this.sendUserMessageWithAttachments(prompt, requestContext, undefined, source);
 	}
 
 	logInlineCompletion(message: string): void {
@@ -486,7 +509,7 @@ export class BeamService extends vscode.Disposable {
 		return normalized || undefined;
 	}
 
-	async sendUserMessageWithAttachments(prompt: string, requestContext?: string, attachments?: IBeamComposerResolvedAttachments): Promise<void> {
+	async sendUserMessageWithAttachments(prompt: string, requestContext?: string, attachments?: IBeamComposerResolvedAttachments, source: string = 'unknown'): Promise<void> {
 		const trimmed = prompt.trim();
 		const hasAttachmentPayload = Boolean(attachments?.context || attachments?.images.length || attachments?.documents.length);
 		if (this.busy || (!trimmed && !requestContext?.trim() && !hasAttachmentPayload)) {
@@ -498,10 +521,12 @@ export class BeamService extends vscode.Disposable {
 			return;
 		}
 
+		const simpleQuery = isSimpleQueryPrompt(trimmed);
 		this.lastRequestContext = trimRequestContext(requestContext?.trim());
 		this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 		this.pendingToolNames = [];
 		this.workingLabel = vscode.l10n.t('正在分析需求并规划下一步...');
+		this.log(vscode.l10n.t('Beam 开始处理用户消息，来源：{0}，内容预览：{1}', source, truncateTextValue(trimmed || '[attachment-only]', 80)));
 		const userFacingPrompt = trimmed || vscode.l10n.t('\u8bf7\u7ed3\u5408\u5df2\u9644\u52a0\u7684\u4e0a\u4e0b\u6587\u7ee7\u7eed\u3002');
 		const modelFacingPrompt = buildModelFacingUserPrompt(trimmed, this.sessionTaskState, hasAttachmentPayload);
 		this.messages = [...this.messages, { role: 'user', content: userFacingPrompt, modelContent: modelFacingPrompt }];
@@ -514,7 +539,7 @@ export class BeamService extends vscode.Disposable {
 		this._onDidChangeState.fire(this.getState());
 
 		try {
-			const content = await this.requestAssistantResponse(configuration, undefined, this.activeRequestCancellation.token, attachments);
+			const content = await this.requestAssistantResponse(configuration, undefined, this.activeRequestCancellation.token, attachments, simpleQuery);
 			this.messages = [...this.messages, { role: 'assistant', content, modelContent: content }];
 			this.sessionTaskState = this.deriveSessionTaskState(this.messages);
 			this.persistState();
@@ -555,13 +580,46 @@ export class BeamService extends vscode.Disposable {
 		configuration: IBeamProviderConfiguration,
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
 		token?: vscode.CancellationToken,
-		attachments?: IBeamComposerResolvedAttachments
+		attachments?: IBeamComposerResolvedAttachments,
+		simpleQuery?: boolean
 	): Promise<string> {
 		if (configuration.provider === 'openai') {
-			return this.requestOpenAIResponse(configuration, progress, token, attachments);
+			return this.requestOpenAIResponse(configuration, progress, token, attachments, simpleQuery);
 		}
 
-		return this.requestAnthropicResponse(configuration, progress, token, attachments);
+		return this.requestAnthropicResponse(configuration, progress, token, attachments, simpleQuery);
+	}
+
+	private async requestLoopGuardConclusion(
+		configuration: IBeamProviderConfiguration,
+		turns: readonly IRequestTurn[],
+		reason: string | undefined,
+		token?: vscode.CancellationToken
+	): Promise<string | undefined> {
+		const conclusionPrompt = reason
+			? `Loop guard triggered: ${reason}\n\nStop calling tools now. Based only on the evidence already gathered in this conversation, give the user the best direct answer or next-step recommendation. Do not ask to continue searching. Do not mention internal loop guards unless necessary.`
+			: 'Stop calling tools now. Based only on the evidence already gathered in this conversation, give the user the best direct answer or next-step recommendation. Do not ask to continue searching.';
+		const conclusionTurns: IRequestTurn[] = [
+			...turns,
+			{
+				role: 'user',
+				content: [{ type: 'text', text: conclusionPrompt }]
+			}
+		];
+
+		try {
+			const conclusion = await this.requestPlainTextResponse(configuration, conclusionTurns, {
+				silentAuth: true,
+				maxTokens: 1200,
+				requestTimeoutMs: 45000,
+				maxAttempts: 2
+			}, token);
+			return conclusion.trim() || undefined;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.log(vscode.l10n.t('Beam 在循环收口回答时失败：{0}', message));
+			return undefined;
+		}
 	}
 
 	private async requestPlainTextResponse(
@@ -581,7 +639,8 @@ export class BeamService extends vscode.Disposable {
 		configuration: IBeamProviderConfiguration,
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
 		token?: vscode.CancellationToken,
-		attachments?: IBeamComposerResolvedAttachments
+		attachments?: IBeamComposerResolvedAttachments,
+		simpleQuery?: boolean
 	): Promise<string> {
 		const { baseUrl, apiKey, authToken, requestModel: model, systemPrompt } = configuration;
 		if (!apiKey && !authToken) {
@@ -591,6 +650,7 @@ export class BeamService extends vscode.Disposable {
 		const endpoint = this.resolveAnthropicEndpoint(baseUrl);
 		const tools = this.toolService.getDefinitions();
 		const turns = this.buildInitialTurns(attachments);
+		const toolLoopGuard = new BeamToolLoopGuard({ simpleQuery });
 		const headers = this.buildAnthropicHeaders(configuration);
 
 		for (let round = 0; ; round++) {
@@ -631,6 +691,21 @@ export class BeamService extends vscode.Disposable {
 				}
 
 				return assistantText;
+			}
+
+			const loopDecision = toolLoopGuard.register(toolUses);
+			if (loopDecision.shouldStop) {
+				this.log(vscode.l10n.t('Beam 停止继续调用工具：{0}', loopDecision.reason || 'tool loop guard'));
+				if (assistantText) {
+					return assistantText;
+				}
+
+				const conclusion = await this.requestLoopGuardConclusion(configuration, turns, loopDecision.reason, token);
+				if (conclusion) {
+					return conclusion;
+				}
+
+				return this.buildLoopGuardFallbackMessage(loopDecision.reason);
 			}
 
 			this.recordAssistantProgress(assistantText, round);
@@ -714,7 +789,8 @@ export class BeamService extends vscode.Disposable {
 		configuration: IBeamProviderConfiguration,
 		progress?: vscode.Progress<{ message?: string; increment?: number }>,
 		token?: vscode.CancellationToken,
-		attachments?: IBeamComposerResolvedAttachments
+		attachments?: IBeamComposerResolvedAttachments,
+		simpleQuery?: boolean
 	): Promise<string> {
 		const { apiKey } = configuration;
 		if (!apiKey) {
@@ -722,6 +798,7 @@ export class BeamService extends vscode.Disposable {
 		}
 
 		const turns = this.buildInitialTurns(attachments);
+		const toolLoopGuard = new BeamToolLoopGuard({ simpleQuery });
 
 		for (let round = 0; ; round++) {
 			this.throwIfCancelled(token);
@@ -739,6 +816,21 @@ export class BeamService extends vscode.Disposable {
 				}
 
 				return assistantText;
+			}
+
+			const loopDecision = toolLoopGuard.register(toolUses);
+			if (loopDecision.shouldStop) {
+				this.log(vscode.l10n.t('Beam 停止继续调用工具：{0}', loopDecision.reason || 'tool loop guard'));
+				if (assistantText) {
+					return assistantText;
+				}
+
+				const conclusion = await this.requestLoopGuardConclusion(configuration, turns, loopDecision.reason, token);
+				if (conclusion) {
+					return conclusion;
+				}
+
+				return this.buildLoopGuardFallbackMessage(loopDecision.reason);
 			}
 
 			this.recordAssistantProgress(assistantText, round);
@@ -1374,6 +1466,9 @@ export class BeamService extends vscode.Disposable {
 	}
 
 	private restoreState(): void {
+		this.busy = false;
+		this.workingLabel = undefined;
+		this.pendingToolNames = [];
 		const storedSessions = this.storage.get<IBeamChatSessionRecord[]>(STORAGE_KEY);
 		const restoredSessions = Array.isArray(storedSessions)
 			? storedSessions.filter(isBeamChatSessionRecord).slice(0, MAX_SESSIONS)
@@ -1604,6 +1699,11 @@ export class BeamService extends vscode.Disposable {
 
 	private deriveSessionTaskState(messages: readonly IBeamChatMessage[]): IBeamSessionTaskState | undefined {
 		return deriveSessionTaskState(messages, this.sessionTaskState);
+	}
+
+	private buildLoopGuardFallbackMessage(reason?: string): string {
+		const suffix = reason ? `\n\n${vscode.l10n.t('已自动停止重复搜索：{0}', reason)}` : '';
+		return `${vscode.l10n.t('我已经收集到当前可用的信息，接下来不再重复搜索。请基于现有证据继续回答，或直接提出下一步修改建议。')}${suffix}`;
 	}
 
 	private updateActiveSessionTitleFromPrompt(prompt: string): void {
@@ -2554,6 +2654,16 @@ function toUserFacingBeamErrorMessage(message: string): string {
 function shouldFallbackToOpenAIChatCompletions(error: Error): boolean {
 	return /状态码：\s*(400|404|405|415|422|501)\b/i.test(error.message)
 		|| /unsupported|not supported|unknown parameter|invalid input|responses/i.test(error.message);
+}
+
+function isSimpleQueryPrompt(value: string): boolean {
+	const trimmed = value.trim();
+	if (!trimmed || trimmed.length > SIMPLE_QUERY_MAX_CHARS) {
+		return false;
+	}
+
+	const normalized = trimmed.toLowerCase();
+	return SIMPLE_QUERY_MARKERS.some(marker => normalized.includes(marker));
 }
 
 function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
