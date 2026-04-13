@@ -377,9 +377,12 @@ function compactToolProperties(properties: Record<string, unknown>): Record<stri
 		}
 
 		const record = value as Record<string, unknown>;
+		const description = typeof record.description === 'string'
+			? compactToolText(record.description)
+			: undefined;
 		return [key, {
 			...record,
-			description: compactToolText(typeof record.description === 'string' ? record.description : undefined)
+			...(description ? { description } : {})
 		}];
 	}));
 }

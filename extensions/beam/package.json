@@ -6,13 +6,30 @@
   "publisher": "vscode",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.70.0"
+    "vscode": "^1.115.0"
   },
+  "preview": true,
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "beam",
+    "ai",
+    "chat",
+    "assistant",
+    "claude",
+    "openai",
+    "inline-completions"
+  ],
   "icon": "media/icon.png",
   "main": "./out/extension.js",
+  "scripts": {
+    "compile": "node ../../node_modules/typescript/bin/tsc -p ./tsconfig.json",
+    "watch": "node ../../node_modules/typescript/bin/tsc -p ./tsconfig.json --watch",
+    "test": "node ../../node_modules/mocha/bin/mocha --ui tdd ./out/test/**/*.test.js",
+    "package": "npx @vscode/vsce package --allow-missing-repository",
+    "vscode:prepublish": "npm run compile"
+  },
   "activationEvents": [
     "onStartupFinished",
     "onView:beam.sidebar",
@@ -160,6 +177,12 @@
         "icon": "$(close)"
       },
       {
+        "command": "beam.reopenProposal",
+        "title": "%command.reopenProposal%",
+        "category": "%command.category%",
+        "icon": "$(diff)"
+      },
+      {
         "command": "beam.openProposalDiff",
         "title": "%command.openProposalDiff%",
         "category": "%command.category%",
@@ -290,6 +313,9 @@
         },
         {
           "command": "beam.rejectProposal"
+        },
+        {
+          "command": "beam.reopenProposal"
         },
         {
           "command": "beam.analyzeCurrentContext"

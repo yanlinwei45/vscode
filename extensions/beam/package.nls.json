@@ -18,6 +18,7 @@
 	"command.previewReplaceSelectionWithCodeBlock": "预览用 Beam 代码替换选中内容",
 	"command.acceptProposal": "接受 Beam 提议",
 	"command.rejectProposal": "拒绝 Beam 提议",
+	"command.reopenProposal": "重新打开当前提议",
 	"command.openProposalDiff": "打开提议对比视图",
 	"command.openPendingChange": "打开提议文件",
 	"command.previousProposal": "查看上一个提议文件",
